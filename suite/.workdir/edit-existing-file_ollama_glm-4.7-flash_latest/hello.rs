@@ -1,12 +1,14 @@
-fn main() {
-    println!("Hello, world!");
-    debug_args(std::env::args().collect::<Vec<_>>());
+fn debug_args(args: &[String]) {
+    println!("Debug - All arguments:");
+    for (i, arg) in args.iter().enumerate() {
+        println!("  [{}]: {}", i, arg);
+    }
 }
 
-fn debug_args(args: Vec<String>) {
-    println!("--- Debug Arguments ---");
-    for (i, arg) in args.iter().enumerate() {
-        println!("arg[{}]: {}", i, arg);
-    }
-    println!("--- End Arguments ---");
+fn main() {
+    println!("Hello, world!");
+
+    // Print all command line arguments
+    let args: Vec<String> = std::env::args().collect();
+    debug_args(&args);
 }

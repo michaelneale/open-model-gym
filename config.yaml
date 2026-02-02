@@ -5,22 +5,40 @@ agent-config:
     model: claude-opus-4-5-20251101
     extensions: [developer, todo, skills, code_execution, extensionmanager]
 
-  - name: opus-baseline-code-mode
-    provider: anthropic
-    model: claude-opus-4-5-20251101
-    extensions: [developer, todo, skills, extensionmanager]
-
-  - name: opus-with-harness
+  - name: opus-full
     provider: anthropic
     model: claude-opus-4-5-20251101
     extensions: [developer, todo, skills, code_execution, extensionmanager]
     stdio:
       - node mcp-harness/dist/index.js
 
-  - name: qwen3-coder-64k
+  - name: nemotron-full
     provider: ollama
-    model: qwen3-coder:64k
-    extensions: [developer, todo, skills, extensionmanager]
+    model: nemotron-3-nano:latest
+    extensions: [developer, todo, skills, code_execution, extensionmanager]
+    stdio:
+      - node mcp-harness/dist/index.js
+
+  - name: kimi-k2.5:cloud
+    provider: ollama
+    model: kimi-k2.5:cloud
+    extensions: [developer, todo, skills, code_execution, extensionmanager]
+    stdio:
+      - node mcp-harness/dist/index.js
+
+  - name: gpt-oss:120b-cloud
+    provider: ollama
+    model: gpt-oss:120b-cloud
+    extensions: [developer, todo, skills, code_execution, extensionmanager]
+    stdio:
+      - node mcp-harness/dist/index.js
+
+  - name: gpt-oss-20b-full
+    provider: ollama
+    model: gpt-oss:20b
+    extensions: [developer, todo, skills, code_execution, extensionmanager]
+    stdio:
+      - node mcp-harness/dist/index.js
 
   - name: qwen3-coder-64k-full
     provider: ollama
@@ -28,6 +46,11 @@ agent-config:
     extensions: [developer, todo, skills, code_execution, extensionmanager]
     stdio:
       - node mcp-harness/dist/index.js
+
+  - name: qwen3-coder-64k-lean-code-mode
+    provider: ollama
+    model: qwen3-coder:64k
+    extensions: [developer, code_execution]
 
   - name: qwen3-coder-64k-lean
     provider: ollama
@@ -46,17 +69,23 @@ agent-config:
     model: glm-4.7-flash:latest
     extensions: [developer]
 
+  - name: glm-4.7-flash-lean-code-mode
+    provider: ollama
+    model: glm-4.7-flash:latest
+    extensions: [developer, code_execution]
+
 # Test matrix: which scenarios run with which agents
 matrix:
+  - scenario: edit-existing-file
   - scenario: simple-file-create
+  - scenario: mcp-harness-workflow
     agents:
       [
-        opus-baseline,
-        opus-baseline-code-mode,
-        qwen3-coder-64k-lean,
-        glm-4.7-flash-lean,
+        opus-full,
+        qwen3-coder-64k-full,
+        glm-4.7-flash-full,
+        gpt-oss-20b-full,
+        kimi-k2.5:cloud,
+        nemotron-full,
+        gpt-oss:120b-cloud,
       ]
-  - scenario: mcp-harness-workflow
-    agents: [opus-with-harness, qwen3-coder-64k-full, glm-4.7-flash-full]
-  - scenario: edit-existing-file
-    agents: [opus-with-harness, qwen3-coder-64k-full, glm-4.7-flash-full]
