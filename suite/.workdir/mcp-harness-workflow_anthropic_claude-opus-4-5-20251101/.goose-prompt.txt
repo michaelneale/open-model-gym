@@ -1,5 +1,0 @@
-Using the available tools, complete these tasks:
-1. Search Slack for messages mentioning "quarterly review"
-2. Create a Jira issue titled "Q1 Review Follow-ups" with description summarizing what you found
-3. Create a calendar event for next Monday at 2pm called "Review Discussion"
-4. Write a summary of what you did to a file called workflow-log.md
