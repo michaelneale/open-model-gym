@@ -1,10 +1,85 @@
 import { mkdirSync, writeFileSync, rmSync, readdirSync } from "node:fs";
 import { join, basename } from "node:path";
 import { execSync } from "node:child_process";
-import { parse } from "yaml";
+import { parse, stringify } from "yaml";
 import { readFileSync } from "node:fs";
 import type { AgentConfig, Scenario, TestResult, TestRun } from "./types.js";
 import { validateAll } from "./validator.js";
+
+// Base goose extensions that should always be enabled
+const GOOSE_BASE_EXTENSIONS = {
+  todo: {
+    enabled: true,
+    type: "platform",
+    name: "todo",
+    description: "Enable a todo list for goose so it can keep track of what it is doing",
+    display_name: "Todo",
+    bundled: true,
+  },
+  skills: {
+    enabled: true,
+    type: "platform",
+    name: "skills",
+    description: "Load and use skills from relevant directories",
+    display_name: "Skills",
+    bundled: true,
+  },
+  code_execution: {
+    enabled: true,
+    type: "platform",
+    name: "code_execution",
+    description: "Goose will make extension calls through code execution, saving tokens",
+    display_name: "Code Mode",
+    bundled: true,
+  },
+  extensionmanager: {
+    enabled: true,
+    type: "platform",
+    name: "Extension Manager",
+    description: "Enable extension management tools for discovering, enabling, and disabling extensions",
+    display_name: "Extension Manager",
+    bundled: true,
+  },
+};
+
+function generateGooseConfig(agentConfig: AgentConfig): object {
+  const extensions: Record<string, object> = { ...GOOSE_BASE_EXTENSIONS };
+
+  // Add builtin extensions
+  for (const ext of agentConfig.extensions ?? []) {
+    extensions[ext] = {
+      enabled: true,
+      type: "builtin",
+      name: ext,
+      timeout: 300,
+      bundled: true,
+    };
+  }
+
+  // Add stdio extensions
+  for (const extCmd of agentConfig.stdioExtensions ?? []) {
+    const parts = extCmd.split(" ");
+    const cmd = parts[0];
+    const args = parts.slice(1);
+    const name = basename(args[args.length - 1] || cmd).replace(/\.[^.]+$/, "");
+
+    extensions[name] = {
+      enabled: true,
+      type: "stdio",
+      name,
+      cmd,
+      args,
+      timeout: 300,
+    };
+  }
+
+  return {
+    extensions,
+    GOOSE_PROVIDER: agentConfig.provider,
+    GOOSE_MODEL: agentConfig.model,
+    GOOSE_TELEMETRY_ENABLED: false,
+  };
+}
 
 function loadScenario(path: string): Scenario {
   const content = readFileSync(path, "utf-8");
@@ -29,6 +104,10 @@ function setupWorkdir(scenario: Scenario, workdir: string): void {
   }
 }
 
+// Shared goose root - config swapped before each run
+const GOOSE_ROOT = join(import.meta.dirname, "../.goose-root");
+const GOOSE_CONFIG_DIR = join(GOOSE_ROOT, "config");
+
 async function runAgent(
   config: AgentConfig,
   prompt: string,
@@ -38,29 +117,22 @@ async function runAgent(
   const promptFile = join(workdir, ".goose-prompt.txt");
   writeFileSync(promptFile, prompt);
 
-  // Build extension flags
-  const extensionFlags: string[] = [];
-  for (const ext of config.extensions ?? []) {
-    extensionFlags.push("--with-builtin", ext);
-  }
-  for (const ext of config.stdioExtensions ?? []) {
-    extensionFlags.push("--with-extension", ext);
-  }
+  // Swap in config for this run
+  mkdirSync(GOOSE_CONFIG_DIR, { recursive: true });
+  const gooseConfig = generateGooseConfig(config);
+  writeFileSync(join(GOOSE_CONFIG_DIR, "config.yaml"), stringify(gooseConfig));
 
-  const args = [
-    "run",
-    "-i", promptFile,
-    "--provider", config.provider,
-    "--model", config.model,
-    "--no-session",
-    ...extensionFlags,
-  ];
+  const args = ["run", "-i", promptFile, "--no-session"];
 
-  const cmd = `goose ${args.map(a => a.includes(" ") ? `"${a}"` : a).join(" ")}`;
+  const cmd = `goose ${args.join(" ")}`;
   console.log(`  Running: ${cmd}`);
 
   const output = execSync(cmd, {
     cwd: workdir,
+    env: {
+      ...process.env,
+      GOOSE_PATH_ROOT: GOOSE_ROOT,
+    },
     timeout: 5 * 60 * 1000, // 5 minute timeout
     encoding: "utf-8",
   });
@@ -283,9 +355,13 @@ function loadConfig(configPath: string): SuiteConfig {
       agent.stdioExtensions = agent.stdioExtensions.map((ext) => {
         const parts = ext.split(" ");
         const cmd = parts[0];
-        const args = parts.slice(1).map((arg) =>
-          arg.startsWith(".") ? join(configDir, arg) : arg
-        );
+        const args = parts.slice(1).map((arg) => {
+          // Resolve any path that's not absolute
+          if (!arg.startsWith("/") && (arg.includes("/") || arg.startsWith("."))) {
+            return join(configDir, arg);
+          }
+          return arg;
+        });
         return [cmd, ...args].join(" ");
       });
     }
