@@ -1,5 +1,5 @@
 # A Short Joke
 
-Why don't scientists trust atoms?
+Why do programmers prefer dark mode?
 
-Because they make up everything!
+Because light attracts bugs! 🐛

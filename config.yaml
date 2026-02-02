@@ -1,20 +1,25 @@
 # Agent configurations
-agents:
+agent-config:
   - name: opus-baseline
     provider: anthropic
     model: claude-opus-4-5-20251101
-    extensions: [developer]
+    extensions: [developer, todo, skills, code_execution, extensionmanager]
+
+  - name: opus-baseline-code-mode
+    provider: anthropic
+    model: claude-opus-4-5-20251101
+    extensions: [developer, todo, skills, extensionmanager]
 
   - name: opus-with-harness
     provider: anthropic
     model: claude-opus-4-5-20251101
-    extensions: [developer]
-    stdioExtensions:
+    extensions: [developer, todo, skills, code_execution, extensionmanager]
+    stdio:
       - node mcp-harness/dist/index.js
 
 # Test matrix: which scenarios run with which agents
 matrix:
   - scenario: simple-file-create
-    agents: [opus-baseline]
+    agents: [opus-baseline, opus-baseline-code-mode, opus-with-harness]
   - scenario: mcp-harness-workflow
-    agents: [opus-with-harness]
+    agents: [opus-baseline, opus-baseline-code-mode, opus-with-harness]

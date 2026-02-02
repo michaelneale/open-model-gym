@@ -1,9 +1,10 @@
 export interface AgentConfig {
   model: string;
   provider: string;
+  /** Extensions (runner knows which are platform vs builtin) */
   extensions?: string[];
   /** Stdio extension commands (for custom MCP servers) */
-  stdioExtensions?: string[];
+  stdio?: string[];
   temperature?: number;
   maxTokens?: number;
 }

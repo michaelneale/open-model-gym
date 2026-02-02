@@ -6,58 +6,37 @@ import { readFileSync } from "node:fs";
 import type { AgentConfig, Scenario, TestResult, TestRun } from "./types.js";
 import { validateAll } from "./validator.js";
 
-// Base goose extensions that should always be enabled
-const GOOSE_BASE_EXTENSIONS = {
-  todo: {
-    enabled: true,
-    type: "platform",
-    name: "todo",
-    description: "Enable a todo list for goose so it can keep track of what it is doing",
-    display_name: "Todo",
-    bundled: true,
-  },
-  skills: {
-    enabled: true,
-    type: "platform",
-    name: "skills",
-    description: "Load and use skills from relevant directories",
-    display_name: "Skills",
-    bundled: true,
-  },
-  code_execution: {
-    enabled: true,
-    type: "platform",
-    name: "code_execution",
-    description: "Goose will make extension calls through code execution, saving tokens",
-    display_name: "Code Mode",
-    bundled: true,
-  },
-  extensionmanager: {
-    enabled: true,
-    type: "platform",
-    name: "Extension Manager",
-    description: "Enable extension management tools for discovering, enabling, and disabling extensions",
-    display_name: "Extension Manager",
-    bundled: true,
-  },
-};
+// Platform extensions (not builtin)
+const PLATFORM_EXTENSIONS = new Set([
+  "todo", "skills", "code_execution", "extensionmanager", 
+  "chatrecall", "apps", "imagegenerator"
+]);
 
 function generateGooseConfig(agentConfig: AgentConfig): object {
-  const extensions: Record<string, object> = { ...GOOSE_BASE_EXTENSIONS };
+  const extensions: Record<string, object> = {};
 
-  // Add builtin extensions
+  // Add extensions (detect platform vs builtin)
   for (const ext of agentConfig.extensions ?? []) {
-    extensions[ext] = {
-      enabled: true,
-      type: "builtin",
-      name: ext,
-      timeout: 300,
-      bundled: true,
-    };
+    if (PLATFORM_EXTENSIONS.has(ext)) {
+      extensions[ext] = {
+        enabled: true,
+        type: "platform",
+        name: ext,
+        bundled: true,
+      };
+    } else {
+      extensions[ext] = {
+        enabled: true,
+        type: "builtin",
+        name: ext,
+        timeout: 300,
+        bundled: true,
+      };
+    }
   }
 
   // Add stdio extensions
-  for (const extCmd of agentConfig.stdioExtensions ?? []) {
+  for (const extCmd of agentConfig.stdio ?? []) {
     const parts = extCmd.split(" ");
     const cmd = parts[0];
     const args = parts.slice(1);
@@ -226,15 +205,35 @@ function printResults(results: TestResult[]): void {
   console.log(`\n${passed}/${results.length} scenarios passed`);
 }
 
+function formatAgentConfig(config: AgentConfig): string {
+  const parts = [`${config.provider}/${config.model}`];
+  const allExts = [
+    ...(config.extensions ?? []),
+    ...(config.stdio ?? []).map((e) => basename(e.split(" ").pop() || e).replace(/\.[^.]+$/, "")),
+  ];
+  if (allExts.length) parts.push(`[${allExts.join(", ")}]`);
+  return parts.join(" ");
+}
+
+function agentConfigKey(config: AgentConfig): string {
+  return JSON.stringify({
+    provider: config.provider,
+    model: config.model,
+    extensions: config.extensions ?? [],
+    stdio: config.stdio ?? [],
+  });
+}
+
 function generateHtmlReport(results: TestResultWithLog[], outputPath: string): void {
   const scenarios = [...new Set(results.map((r) => r.run.scenario.name))];
-  const configs = [...new Set(results.map((r) => `${r.run.config.provider}/${r.run.config.model}`))];
+  const configKeys = [...new Set(results.map((r) => agentConfigKey(r.run.config)))];
+  const configsByKey = new Map(results.map((r) => [agentConfigKey(r.run.config), r.run.config]));
 
   const getResult = (scenario: string, configKey: string) =>
     results.find(
       (r) =>
         r.run.scenario.name === scenario &&
-        `${r.run.config.provider}/${r.run.config.model}` === configKey
+        agentConfigKey(r.run.config) === configKey
     );
 
   const passed = results.filter((r) => r.run.status === "passed").length;
@@ -266,10 +265,15 @@ function generateHtmlReport(results: TestResultWithLog[], outputPath: string): v
     .duration { color: #8b949e; font-size: 0.85rem; }
     .log-link { color: #58a6ff; font-size: 0.75rem; text-decoration: none; }
     .log-link:hover { text-decoration: underline; }
-    .details { font-size: 0.8rem; color: #f85149; max-width: 300px; }
+    .details { font-size: 0.8rem; max-width: 300px; }
+    .validation { display: flex; align-items: center; gap: 0.25rem; margin-top: 0.25rem; }
+    .validation.pass { color: #3fb950; }
+    .validation.fail { color: #f85149; }
+    .validation-icon { font-size: 0.7rem; }
     .config-header { font-size: 0.75rem; }
     .config-header .model { display: block; color: #c9d1d9; font-weight: 600; }
     .config-header .provider { color: #8b949e; }
+    .config-header .extensions { display: block; color: #7ee787; font-size: 0.7rem; }
     .legend { margin-top: 2rem; display: flex; gap: 2rem; }
     .legend-item { display: flex; align-items: center; gap: 0.5rem; color: #8b949e; }
     .timestamp { color: #6e7681; font-size: 0.9rem; margin-top: 2rem; }
@@ -287,9 +291,17 @@ function generateHtmlReport(results: TestResultWithLog[], outputPath: string): v
     <thead>
       <tr>
         <th>Scenario</th>
-        ${configs.map((c) => {
-          const [provider, ...model] = c.split("/");
-          return `<th><div class="config-header"><span class="model">${model.join("/")}</span><span class="provider">${provider}</span></div></th>`;
+        ${configKeys.map((key) => {
+          const cfg = configsByKey.get(key)!;
+          const allExts = [
+            ...(cfg.extensions ?? []),
+            ...(cfg.stdio ?? []).map((e) => basename(e.split(" ").pop() || e).replace(/\.[^.]+$/, "")),
+          ];
+          return `<th><div class="config-header">
+            <span class="model">${cfg.model}</span>
+            <span class="provider">${cfg.provider}</span>
+            ${allExts.length ? `<span class="extensions">[${allExts.join(", ")}]</span>` : ""}
+          </div></th>`;
         }).join("")}
       </tr>
     </thead>
@@ -297,21 +309,26 @@ function generateHtmlReport(results: TestResultWithLog[], outputPath: string): v
       ${scenarios.map((scenario) => `
         <tr>
           <td>${scenario}</td>
-          ${configs.map((config) => {
-            const r = getResult(scenario, config) as TestResultWithLog | undefined;
+          ${configKeys.map((key) => {
+            const r = getResult(scenario, key) as TestResultWithLog | undefined;
             if (!r) return `<td><div class="cell"><span class="status pending">-</span></div></td>`;
             const duration = r.run.endTime
               ? ((r.run.endTime.getTime() - r.run.startTime.getTime()) / 1000).toFixed(1)
               : "-";
-            const errors = r.validations.filter((v) => !v.passed).map((v) => v.message).join("; ");
             const logPath = r.logFile ? `logs/${basename(r.logFile)}` : "";
+            const validationHtml = r.validations.map((v) => {
+              const icon = v.passed ? "✓" : "✗";
+              const cls = v.passed ? "pass" : "fail";
+              const label = v.rule.type + (("path" in v.rule) ? `: ${v.rule.path}` : "");
+              return `<div class="validation ${cls}"><span class="validation-icon">${icon}</span> ${label}</div>`;
+            }).join("");
             return `<td>
               <div class="cell">
                 <span class="status ${r.run.status}">${r.run.status === "passed" ? "✓" : "✗"}</span>
                 <span class="duration">${duration}s</span>
                 ${logPath ? `<a class="log-link" href="${logPath}">log</a>` : ""}
               </div>
-              ${errors ? `<div class="details">${errors}</div>` : ""}
+              <div class="details">${validationHtml}</div>
             </td>`;
           }).join("")}
         </tr>
@@ -340,7 +357,7 @@ interface MatrixEntry {
 }
 
 interface SuiteConfig {
-  agents: NamedAgentConfig[];
+  "agent-config": NamedAgentConfig[];
   matrix?: MatrixEntry[];
 }
 
@@ -349,10 +366,10 @@ function loadConfig(configPath: string): SuiteConfig {
   const config = parse(content) as SuiteConfig;
   const configDir = join(configPath, "..");
 
-  // Resolve relative paths in stdioExtensions
-  for (const agent of config.agents) {
-    if (agent.stdioExtensions) {
-      agent.stdioExtensions = agent.stdioExtensions.map((ext) => {
+  // Resolve relative paths in stdio extensions
+  for (const agent of config["agent-config"]) {
+    if (agent.stdio) {
+      agent.stdio = agent.stdio.map((ext) => {
         const parts = ext.split(" ");
         const cmd = parts[0];
         const args = parts.slice(1).map((arg) => {
@@ -374,7 +391,7 @@ function buildTestPairs(
   config: SuiteConfig,
   scenarios: Scenario[]
 ): Array<{ scenario: Scenario; agent: NamedAgentConfig }> {
-  const agentsByName = new Map(config.agents.map((a) => [a.name, a]));
+  const agentsByName = new Map(config["agent-config"].map((a) => [a.name, a]));
 
   if (config.matrix?.length) {
     // Use explicit matrix
@@ -384,7 +401,7 @@ function buildTestPairs(
       if (!scenario) continue;
       const agents = entry.agents
         ? entry.agents.map((n) => agentsByName.get(n)).filter(Boolean) as NamedAgentConfig[]
-        : config.agents;  // omit agents = all
+        : config["agent-config"];  // omit agents = all
       for (const agent of agents) {
         pairs.push({ scenario, agent });
       }
@@ -395,7 +412,7 @@ function buildTestPairs(
   // No matrix: all scenarios x all agents
   const pairs: Array<{ scenario: Scenario; agent: NamedAgentConfig }> = [];
   for (const scenario of scenarios) {
-    for (const agent of config.agents) {
+    for (const agent of config["agent-config"]) {
       pairs.push({ scenario, agent });
     }
   }
