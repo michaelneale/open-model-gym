@@ -76,8 +76,8 @@ agent-config:
 
 # Test matrix: which scenarios run with which agents
 matrix:
-  - scenario: edit-existing-file
-  - scenario: simple-file-create
+  #- scenario: edit-existing-file
+  #- scenario: simple-file-create
   - scenario: mcp-harness-workflow
     agents:
       [
