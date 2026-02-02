@@ -1,3 +1,4 @@
+#!/usr/bin/env node
 import { mkdirSync, writeFileSync, rmSync, readdirSync } from "node:fs";
 import { join, basename } from "node:path";
 import { execSync } from "node:child_process";
@@ -111,6 +112,7 @@ async function runAgent(
     env: {
       ...process.env,
       GOOSE_PATH_ROOT: GOOSE_ROOT,
+      MCP_HARNESS_LOG: join(workdir, "tool-calls.log"),
     },
     timeout: 5 * 60 * 1000, // 5 minute timeout
     encoding: "utf-8",

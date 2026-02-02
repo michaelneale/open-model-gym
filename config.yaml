@@ -17,9 +17,46 @@ agent-config:
     stdio:
       - node mcp-harness/dist/index.js
 
+  - name: qwen3-coder-64k
+    provider: ollama
+    model: qwen3-coder:64k
+    extensions: [developer, todo, skills, extensionmanager]
+
+  - name: qwen3-coder-64k-full
+    provider: ollama
+    model: qwen3-coder:64k
+    extensions: [developer, todo, skills, code_execution, extensionmanager]
+    stdio:
+      - node mcp-harness/dist/index.js
+
+  - name: qwen3-coder-64k-lean
+    provider: ollama
+    model: qwen3-coder:64k
+    extensions: [developer]
+
+  - name: glm-4.7-flash-full
+    provider: ollama
+    model: glm-4.7-flash:latest
+    extensions: [developer, todo, skills, code_execution, extensionmanager]
+    stdio:
+      - node mcp-harness/dist/index.js
+
+  - name: glm-4.7-flash-lean
+    provider: ollama
+    model: glm-4.7-flash:latest
+    extensions: [developer]
+
 # Test matrix: which scenarios run with which agents
 matrix:
   - scenario: simple-file-create
-    agents: [opus-baseline, opus-baseline-code-mode, opus-with-harness]
+    agents:
+      [
+        opus-baseline,
+        opus-baseline-code-mode,
+        qwen3-coder-64k-lean,
+        glm-4.7-flash-lean,
+      ]
   - scenario: mcp-harness-workflow
-    agents: [opus-baseline, opus-baseline-code-mode, opus-with-harness]
+    agents: [opus-with-harness, qwen3-coder-64k-full, glm-4.7-flash-full]
+  - scenario: edit-existing-file
+    agents: [opus-with-harness, qwen3-coder-64k-full, glm-4.7-flash-full]

@@ -1,10 +1,11 @@
 {
-  "name": "agent-scenario-suite",
+  "name": "goose-runner",
   "version": "0.1.0",
   "type": "module",
   "scripts": {
-    "test": "tsx src/runner.ts",
-    "test:scenario": "tsx src/runner.ts --scenario"
+    "build": "tsc",
+    "test": "tsx src/goose-runner.ts",
+    "test:scenario": "tsx src/goose-runner.ts --scenario"
   },
   "dependencies": {
     "glob": "^11.0.0",

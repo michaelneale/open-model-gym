@@ -17,6 +17,12 @@ validate:
     path: workflow-log.md
   - type: file_not_empty
     path: workflow-log.md
-  - type: file_matches
-    path: workflow-log.md
-    regex: "(Slack|slack|Jira|jira|calendar|Calendar)"
+  - type: file_contains
+    path: tool-calls.log
+    pattern: slack_search_messages
+  - type: file_contains
+    path: tool-calls.log
+    pattern: jira_create_issue
+  - type: file_contains
+    path: tool-calls.log
+    pattern: calendar_create_event
