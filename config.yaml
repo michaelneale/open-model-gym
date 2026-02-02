@@ -76,16 +76,18 @@ agent-config:
 
 # Test matrix: which scenarios run with which agents
 matrix:
-  #- scenario: edit-existing-file
-  #- scenario: simple-file-create
-  - scenario: mcp-harness-workflow
+  # simple-file-create runs against ALL agents
+  - scenario: simple-file-create
+
+  # everyday-app-automation only runs against agents with stdio (mcp-harness)
+  - scenario: everyday-app-automation
     agents:
       [
         opus-full,
+        nemotron-full,
+        kimi-k2.5:cloud,
+        gpt-oss:120b-cloud,
+        gpt-oss-20b-full,
         qwen3-coder-64k-full,
         glm-4.7-flash-full,
-        gpt-oss-20b-full,
-        kimi-k2.5:cloud,
-        nemotron-full,
-        gpt-oss:120b-cloud,
       ]

@@ -1,1 +1,2 @@
-Create a file called joke.md containing a short joke
+1. Create a file called joke.md containing a short joke
+2. Edit hello.rs to add a debug function that prints all arguments

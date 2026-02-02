@@ -125,6 +125,8 @@ interface TestResultWithLog extends TestResult {
   logFile: string;
 }
 
+type NamedAgentConfig = AgentConfig & { name: string };
+
 async function runScenario(
   scenario: Scenario,
   config: AgentConfig,
@@ -226,10 +228,30 @@ function agentConfigKey(config: AgentConfig): string {
   });
 }
 
-function generateHtmlReport(results: TestResultWithLog[], outputPath: string): void {
-  const scenarios = [...new Set(results.map((r) => r.run.scenario.name))];
-  const configKeys = [...new Set(results.map((r) => agentConfigKey(r.run.config)))];
-  const configsByKey = new Map(results.map((r) => [agentConfigKey(r.run.config), r.run.config]));
+interface ReportOptions {
+  isRunning?: boolean;
+  allPairs?: Array<{ scenario: Scenario; agent: NamedAgentConfig }>;
+}
+
+function generateHtmlReport(
+  results: TestResultWithLog[],
+  outputPath: string,
+  options: ReportOptions = {}
+): void {
+  const { isRunning = false, allPairs = [] } = options;
+
+  // Get all scenarios and configs from pairs (if provided) or results
+  const scenarios = allPairs.length
+    ? [...new Set(allPairs.map((p) => p.scenario.name))]
+    : [...new Set(results.map((r) => r.run.scenario.name))];
+
+  const configKeys = allPairs.length
+    ? [...new Set(allPairs.map((p) => agentConfigKey(p.agent)))]
+    : [...new Set(results.map((r) => agentConfigKey(r.run.config)))];
+
+  const configsByKey = allPairs.length
+    ? new Map(allPairs.map((p) => [agentConfigKey(p.agent), p.agent]))
+    : new Map(results.map((r) => [agentConfigKey(r.run.config), r.run.config]));
 
   const getResult = (scenario: string, configKey: string) =>
     results.find(
@@ -239,14 +261,17 @@ function generateHtmlReport(results: TestResultWithLog[], outputPath: string): v
     );
 
   const passed = results.filter((r) => r.run.status === "passed").length;
-  const total = results.length;
+  const failed = results.filter((r) => r.run.status === "failed").length;
+  const total = allPairs.length || results.length;
+  const pending = total - results.length;
 
   const html = `<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Agent Scenario Test Results</title>
+  ${isRunning ? '<meta http-equiv="refresh" content="3">' : ""}
+  <title>${isRunning ? "Running..." : "Results"} - Agent Tests</title>
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; }
     body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #0d1117; color: #c9d1d9; padding: 2rem; }
@@ -264,6 +289,8 @@ function generateHtmlReport(results: TestResultWithLog[], outputPath: string): v
     .status.passed { background: #238636; }
     .status.failed { background: #da3633; }
     .status.pending { background: #6e7681; }
+    .status.running { background: #9e6a03; animation: pulse 1.5s infinite; }
+    @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.5; } }
     .duration { color: #8b949e; font-size: 0.85rem; }
     .log-link { color: #58a6ff; font-size: 0.75rem; text-decoration: none; }
     .log-link:hover { text-decoration: underline; }
@@ -282,10 +309,10 @@ function generateHtmlReport(results: TestResultWithLog[], outputPath: string): v
   </style>
 </head>
 <body>
-  <h1>🦆 Agent Scenario Test Results</h1>
+  <h1>🦆 Agent Scenario Test Results${isRunning ? " (Running...)" : ""}</h1>
   <p class="summary">
     <span class="passed">${passed} passed</span> / 
-    <span class="failed">${total - passed} failed</span> / 
+    <span class="failed">${failed} failed</span>${pending > 0 ? ` / <span style="color:#9e6a03">${pending} pending</span>` : ""} / 
     ${total} total
   </p>
   
@@ -314,6 +341,9 @@ function generateHtmlReport(results: TestResultWithLog[], outputPath: string): v
           ${configKeys.map((key) => {
             const r = getResult(scenario, key) as TestResultWithLog | undefined;
             if (!r) return `<td><div class="cell"><span class="status pending">-</span></div></td>`;
+            if (r.run.status === "running") {
+              return `<td><div class="cell"><span class="status running">...</span></div></td>`;
+            }
             const duration = r.run.endTime
               ? ((r.run.endTime.getTime() - r.run.startTime.getTime()) / 1000).toFixed(1)
               : "-";
@@ -321,8 +351,10 @@ function generateHtmlReport(results: TestResultWithLog[], outputPath: string): v
             const validationHtml = r.validations.map((v) => {
               const icon = v.passed ? "✓" : "✗";
               const cls = v.passed ? "pass" : "fail";
-              const label = v.rule.type + (("path" in v.rule) ? `: ${v.rule.path}` : "");
-              return `<div class="validation ${cls}"><span class="validation-icon">${icon}</span> ${label}</div>`;
+              const ruleLabel = v.rule.type === "tool_called" 
+                ? `tool_called: ${(v.rule as any).tool}`
+                : v.rule.type + (("path" in v.rule) ? `: ${(v.rule as any).path}` : "");
+              return `<div class="validation ${cls}"><span class="validation-icon">${icon}</span> ${ruleLabel}</div>`;
             }).join("");
             return `<td>
               <div class="cell">
@@ -350,8 +382,6 @@ function generateHtmlReport(results: TestResultWithLog[], outputPath: string): v
   writeFileSync(outputPath, html);
   console.log(`\n📊 Report saved to: ${outputPath}`);
 }
-
-type NamedAgentConfig = AgentConfig & { name: string };
 
 interface MatrixEntry {
   scenario: string;
@@ -442,17 +472,21 @@ async function main() {
 
   console.log(`Running ${pairs.length} test pairs`);
 
+  // Generate initial report with all pending and open browser
   const results: TestResultWithLog[] = [];
+  generateHtmlReport(results, reportPath, { isRunning: true, allPairs: pairs });
+  execSync(`open "${reportPath}"`);
+
   for (const { scenario, agent } of pairs) {
     const result = await runScenario(scenario, agent, workdir, logsDir);
     results.push(result);
+    // Update report after each test
+    generateHtmlReport(results, reportPath, { isRunning: true, allPairs: pairs });
   }
 
+  // Final report without auto-refresh
+  generateHtmlReport(results, reportPath, { isRunning: false, allPairs: pairs });
   printResults(results);
-  generateHtmlReport(results, reportPath);
-
-  // Open report
-  execSync(`open "${reportPath}"`);
 }
 
 main().catch(console.error);

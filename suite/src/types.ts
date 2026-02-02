@@ -27,6 +27,7 @@ export type ValidationRule =
   | { type: "file_matches"; path: string; regex: string }
   | { type: "file_not_empty"; path: string }
   | { type: "command_succeeds"; command: string }
+  | { type: "tool_called"; tool: string; args?: Record<string, string | RegExp> }
   | { type: "custom"; fn: string };
 
 export interface TestRun {

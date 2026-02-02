@@ -1,12 +1,32 @@
 name: simple-file-create
-description: Create a markdown file with a joke
-prompt: Create a file called joke.md containing a short joke
+description: Create a new file and edit an existing file
+prompt: |
+  1. Create a file called joke.md containing a short joke
+  2. Edit hello.rs to add a debug function that prints all arguments
+
 tags:
   - simple
   - file-creation
+  - file-editing
+
+setup:
+  hello.rs: |
+    fn main() {
+        println!("Hello, world!");
+    }
 
 validate:
+  # New file creation
   - type: file_exists
     path: joke.md
   - type: file_not_empty
     path: joke.md
+  # Existing file edit
+  - type: file_exists
+    path: hello.rs
+  - type: file_matches
+    path: hello.rs
+    regex: "fn\\s+debug"
+  - type: file_contains
+    path: hello.rs
+    pattern: "fn main"
