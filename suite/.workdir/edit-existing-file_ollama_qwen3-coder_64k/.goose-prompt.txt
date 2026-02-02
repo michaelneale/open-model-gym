@@ -1,0 +1,1 @@
+Edit hello.rs to add a debug function that prints all arguments

@@ -1,0 +1,23 @@
+name: edit-existing-file
+description: Add a debug function to an existing Rust file
+prompt: Edit hello.rs to add a debug function that prints all arguments
+
+tags:
+  - simple
+  - file-editing
+
+setup:
+  hello.rs: |
+    fn main() {
+        println!("Hello, world!");
+    }
+
+validate:
+  - type: file_exists
+    path: hello.rs
+  - type: file_matches
+    path: hello.rs
+    regex: "fn\\s+debug"
+  - type: file_contains
+    path: hello.rs
+    pattern: "fn main"

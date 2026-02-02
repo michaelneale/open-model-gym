@@ -1,0 +1,28 @@
+# Agent configurations to test
+agents:
+  - name: opus-baseline
+    provider: anthropic
+    model: claude-opus-4-5-20251101
+    extensions: [developer]
+
+  - name: qwen3-coder
+    provider: ollama
+    model: qwen3-coder:64k
+    extensions: [developer]
+
+  - name: glm-flash
+    provider: ollama
+    model: glm-4.7-flash:latest
+    extensions: [developer]
+
+  - name: opus-with-harness
+    provider: anthropic
+    model: claude-opus-4-5-20251101
+    extensions: [developer]
+    stdioExtensions:
+      - node ../mcp-harness/dist/index.js
+
+# Scenarios to run (omit to run all)
+scenarios:
+  - simple-file-create
+  - edit-existing-file

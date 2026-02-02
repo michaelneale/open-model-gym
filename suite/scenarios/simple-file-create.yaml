@@ -1,0 +1,12 @@
+name: simple-file-create
+description: Create a markdown file with a joke
+prompt: Create a file called joke.md containing a short joke
+tags:
+  - simple
+  - file-creation
+
+validate:
+  - type: file_exists
+    path: joke.md
+  - type: file_not_empty
+    path: joke.md
