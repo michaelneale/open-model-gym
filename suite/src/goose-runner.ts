@@ -127,15 +127,26 @@ interface TestResultWithLog extends TestResult {
 
 type NamedAgentConfig = AgentConfig & { name: string };
 
+// Score a result: higher is better (more validations passed, passed status)
+function scoreResult(result: TestResultWithLog): number {
+  if (result.run.status === "failed" && result.run.errors?.length) {
+    return -1; // Crash/error is worst
+  }
+  const passedCount = result.validations.filter((v) => v.passed).length;
+  const statusBonus = result.run.status === "passed" ? 1000 : 0;
+  return statusBonus + passedCount;
+}
+
 async function runScenario(
   scenario: Scenario,
   config: AgentConfig,
   baseWorkdir: string,
-  logsDir: string
+  logsDir: string,
+  attempt: number = 1
 ): Promise<TestResultWithLog> {
   const testId = `${scenario.name}_${config.provider}_${config.model}`.replace(/[\/\\:]/g, "_");
   const workdir = join(baseWorkdir, testId);
-  const logFile = join(logsDir, `${testId}.log`);
+  const logFile = join(logsDir, `${testId}_attempt${attempt}.log`);
 
   console.log(`\n▶ ${scenario.name} [${config.provider}/${config.model}]`);
 
@@ -319,26 +330,25 @@ function generateHtmlReport(
   <table>
     <thead>
       <tr>
-        <th>Scenario</th>
-        ${configKeys.map((key) => {
-          const cfg = configsByKey.get(key)!;
-          const allExts = [
-            ...(cfg.extensions ?? []),
-            ...(cfg.stdio ?? []).map((e) => basename(e.split(" ").pop() || e).replace(/\.[^.]+$/, "")),
-          ];
-          return `<th><div class="config-header">
-            <span class="model">${cfg.model}</span>
-            <span class="provider">${cfg.provider}</span>
-            ${allExts.length ? `<span class="extensions">[${allExts.join(", ")}]</span>` : ""}
-          </div></th>`;
-        }).join("")}
+        <th>Agent</th>
+        ${scenarios.map((scenario) => `<th>${scenario}</th>`).join("")}
       </tr>
     </thead>
     <tbody>
-      ${scenarios.map((scenario) => `
+      ${configKeys.map((key) => {
+        const cfg = configsByKey.get(key)!;
+        const allExts = [
+          ...(cfg.extensions ?? []),
+          ...(cfg.stdio ?? []).map((e) => basename(e.split(" ").pop() || e).replace(/\.[^.]+$/, "")),
+        ];
+        return `
         <tr>
-          <td>${scenario}</td>
-          ${configKeys.map((key) => {
+          <td><div class="config-header">
+            <span class="model">${cfg.model}</span>
+            <span class="provider">${cfg.provider}</span>
+            ${allExts.length ? `<span class="extensions">[${allExts.join(", ")}]</span>` : ""}
+          </div></td>
+          ${scenarios.map((scenario) => {
             const r = getResult(scenario, key) as TestResultWithLog | undefined;
             if (!r) return `<td><div class="cell"><span class="status pending">-</span></div></td>`;
             if (r.run.status === "running") {
@@ -365,8 +375,8 @@ function generateHtmlReport(
               <div class="details">${validationHtml}</div>
             </td>`;
           }).join("")}
-        </tr>
-      `).join("")}
+        </tr>`;
+      }).join("")}
     </tbody>
   </table>
   
@@ -462,25 +472,64 @@ async function main() {
   const config = loadConfig(configPath);
   let scenarios = loadAllScenarios(scenariosDir);
 
-  // CLI --scenario= filter overrides matrix
+  // CLI --scenario= filter (comma-separated for multiple)
   const scenarioFilter = process.argv.find((a) => a.startsWith("--scenario="))?.split("=")[1];
   if (scenarioFilter) {
-    scenarios = scenarios.filter((s) => s.name.includes(scenarioFilter));
+    const filters = scenarioFilter.split(",");
+    scenarios = scenarios.filter((s) => filters.some((f) => s.name.includes(f)));
+  }
+
+  // CLI --agent= filter (comma-separated for multiple)
+  const agentFilter = process.argv.find((a) => a.startsWith("--agent="))?.split("=")[1];
+  if (agentFilter) {
+    const filters = agentFilter.split(",");
+    config["agent-config"] = config["agent-config"].filter((a) => filters.some((f) => a.name.includes(f)));
   }
 
   const pairs = buildTestPairs(config, scenarios);
+  
+  // CLI --run-count=N (default 3)
+  const runCountArg = process.argv.find((a) => a.startsWith("--run-count="))?.split("=")[1];
+  const RUN_COUNT = runCountArg ? parseInt(runCountArg, 10) : 3;
 
-  console.log(`Running ${pairs.length} test pairs`);
+  console.log(`Running ${pairs.length} test pairs (${RUN_COUNT}x each, worst result kept)`);
 
   // Generate initial report with all pending and open browser
   const results: TestResultWithLog[] = [];
   generateHtmlReport(results, reportPath, { isRunning: true, allPairs: pairs });
-  execSync(`open "${reportPath}"`);
+  
+  // CLI --no-open to skip opening browser (useful for chained runs)
+  const noOpen = process.argv.includes("--no-open");
+  if (!noOpen) {
+    execSync(`open "${reportPath}"`);
+  }
 
   for (const { scenario, agent } of pairs) {
-    const result = await runScenario(scenario, agent, workdir, logsDir);
-    results.push(result);
-    // Update report after each test
+    let worstResult: TestResultWithLog | null = null;
+
+    for (let attempt = 1; attempt <= RUN_COUNT; attempt++) {
+      console.log(`  Attempt ${attempt}/${RUN_COUNT}`);
+      const result = await runScenario(scenario, agent, workdir, logsDir, attempt);
+
+      // Keep the worst result (failed > passed, or fewer validations passed)
+      if (!worstResult) {
+        worstResult = result;
+      } else {
+        const prevScore = scoreResult(worstResult);
+        const currScore = scoreResult(result);
+        if (currScore < prevScore) {
+          worstResult = result;
+        }
+      }
+
+      // If we got a failure, that's the worst - no need to continue
+      if (result.run.status === "failed") {
+        break;
+      }
+    }
+
+    results.push(worstResult!);
+    // Update report after each test pair completes
     generateHtmlReport(results, reportPath, { isRunning: true, allPairs: pairs });
   }
 

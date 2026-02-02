@@ -1,4 +1,4 @@
-# A Programmer's Joke
+# A Short Joke
 
 Why do programmers prefer dark mode?
 
