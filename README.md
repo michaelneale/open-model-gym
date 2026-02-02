@@ -5,11 +5,10 @@ Test agent capabilities across model/provider permutations.
 ## Structure
 
 ```
+config.yaml      # Define agents and test matrix
+report.html      # Generated results matrix
 suite/
-  config.yaml    # Define agents and scenarios to test
   scenarios/     # YAML scenario definitions
-  report.html    # Generated results matrix
-
 mcp-harness/     # Mock MCP server (Slack, Jira, etc.)
 ```
 

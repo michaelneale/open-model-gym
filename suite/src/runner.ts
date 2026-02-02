@@ -33,7 +33,7 @@ async function runAgent(
   config: AgentConfig,
   prompt: string,
   workdir: string
-): Promise<void> {
+): Promise<string> {
   // Write prompt to a temp file for -i flag
   const promptFile = join(workdir, ".goose-prompt.txt");
   writeFileSync(promptFile, prompt);
@@ -56,28 +56,36 @@ async function runAgent(
     ...extensionFlags,
   ];
 
-  console.log(`  Running: goose ${args.join(" ")}`);
+  const cmd = `goose ${args.map(a => a.includes(" ") ? `"${a}"` : a).join(" ")}`;
+  console.log(`  Running: ${cmd}`);
 
-  execSync(`goose ${args.map(a => a.includes(" ") ? `"${a}"` : a).join(" ")}`, {
+  const output = execSync(cmd, {
     cwd: workdir,
-    stdio: "inherit",
     timeout: 5 * 60 * 1000, // 5 minute timeout
+    encoding: "utf-8",
   });
+
+  return output;
+}
+
+interface TestResultWithLog extends TestResult {
+  logFile: string;
 }
 
 async function runScenario(
   scenario: Scenario,
   config: AgentConfig,
-  baseWorkdir: string
-): Promise<TestResult> {
-  const workdir = join(
-    baseWorkdir,
-    `${scenario.name}_${config.provider}_${config.model}`.replace(/[\/\\:]/g, "_")
-  );
+  baseWorkdir: string,
+  logsDir: string
+): Promise<TestResultWithLog> {
+  const testId = `${scenario.name}_${config.provider}_${config.model}`.replace(/[\/\\:]/g, "_");
+  const workdir = join(baseWorkdir, testId);
+  const logFile = join(logsDir, `${testId}.log`);
 
   console.log(`\n▶ ${scenario.name} [${config.provider}/${config.model}]`);
 
   setupWorkdir(scenario, workdir);
+  mkdirSync(logsDir, { recursive: true });
 
   const run: TestRun = {
     scenario,
@@ -87,12 +95,15 @@ async function runScenario(
     status: "running",
   };
 
+  let output = "";
   try {
-    await runAgent(config, scenario.prompt, workdir);
+    output = await runAgent(config, scenario.prompt, workdir);
     run.endTime = new Date();
 
     const validations = validateAll(scenario.validate, workdir);
     const allPassed = validations.every((v) => v.result.passed);
+
+    writeFileSync(logFile, output);
 
     return {
       run: { ...run, status: allPassed ? "passed" : "failed" },
@@ -101,8 +112,12 @@ async function runScenario(
         passed: v.result.passed,
         message: v.result.message,
       })),
+      logFile,
     };
   } catch (err) {
+    const errorOutput = output + "\n\nERROR:\n" + String(err);
+    writeFileSync(logFile, errorOutput);
+
     return {
       run: {
         ...run,
@@ -111,6 +126,7 @@ async function runScenario(
         errors: [String(err)],
       },
       validations: [],
+      logFile,
     };
   }
 }
@@ -138,7 +154,7 @@ function printResults(results: TestResult[]): void {
   console.log(`\n${passed}/${results.length} scenarios passed`);
 }
 
-function generateHtmlReport(results: TestResult[], outputPath: string): void {
+function generateHtmlReport(results: TestResultWithLog[], outputPath: string): void {
   const scenarios = [...new Set(results.map((r) => r.run.scenario.name))];
   const configs = [...new Set(results.map((r) => `${r.run.config.provider}/${r.run.config.model}`))];
 
@@ -171,11 +187,13 @@ function generateHtmlReport(results: TestResult[], outputPath: string): void {
     th:first-child { position: sticky; left: 0; background: #21262d; z-index: 1; }
     td:first-child { position: sticky; left: 0; background: #161b22; font-weight: 500; }
     .cell { display: flex; align-items: center; gap: 0.5rem; }
-    .status { width: 24px; height: 24px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 14px; }
+    .status { width: 24px; height: 24px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 14px; text-decoration: none; }
     .status.passed { background: #238636; }
     .status.failed { background: #da3633; }
     .status.pending { background: #6e7681; }
     .duration { color: #8b949e; font-size: 0.85rem; }
+    .log-link { color: #58a6ff; font-size: 0.75rem; text-decoration: none; }
+    .log-link:hover { text-decoration: underline; }
     .details { font-size: 0.8rem; color: #f85149; max-width: 300px; }
     .config-header { font-size: 0.75rem; }
     .config-header .model { display: block; color: #c9d1d9; font-weight: 600; }
@@ -208,16 +226,18 @@ function generateHtmlReport(results: TestResult[], outputPath: string): void {
         <tr>
           <td>${scenario}</td>
           ${configs.map((config) => {
-            const r = getResult(scenario, config);
+            const r = getResult(scenario, config) as TestResultWithLog | undefined;
             if (!r) return `<td><div class="cell"><span class="status pending">-</span></div></td>`;
             const duration = r.run.endTime
               ? ((r.run.endTime.getTime() - r.run.startTime.getTime()) / 1000).toFixed(1)
               : "-";
             const errors = r.validations.filter((v) => !v.passed).map((v) => v.message).join("; ");
+            const logPath = r.logFile ? `logs/${basename(r.logFile)}` : "";
             return `<td>
               <div class="cell">
                 <span class="status ${r.run.status}">${r.run.status === "passed" ? "✓" : "✗"}</span>
                 <span class="duration">${duration}s</span>
+                ${logPath ? `<a class="log-link" href="${logPath}">log</a>` : ""}
               </div>
               ${errors ? `<div class="details">${errors}</div>` : ""}
             </td>`;
@@ -240,9 +260,16 @@ function generateHtmlReport(results: TestResult[], outputPath: string): void {
   console.log(`\n📊 Report saved to: ${outputPath}`);
 }
 
+type NamedAgentConfig = AgentConfig & { name: string };
+
+interface MatrixEntry {
+  scenario: string;
+  agents?: string[];  // omit = all agents
+}
+
 interface SuiteConfig {
-  agents: Array<AgentConfig & { name: string }>;
-  scenarios?: string[];
+  agents: NamedAgentConfig[];
+  matrix?: MatrixEntry[];
 }
 
 function loadConfig(configPath: string): SuiteConfig {
@@ -254,7 +281,6 @@ function loadConfig(configPath: string): SuiteConfig {
   for (const agent of config.agents) {
     if (agent.stdioExtensions) {
       agent.stdioExtensions = agent.stdioExtensions.map((ext) => {
-        // "node ../path/to/server.js" -> resolve the path part
         const parts = ext.split(" ");
         const cmd = parts[0];
         const args = parts.slice(1).map((arg) =>
@@ -268,39 +294,70 @@ function loadConfig(configPath: string): SuiteConfig {
   return config;
 }
 
-async function main() {
-  const configPath = join(import.meta.dirname, "../config.yaml");
-  const scenariosDir = join(import.meta.dirname, "../scenarios");
-  const workdir = join(import.meta.dirname, "../.workdir");
-  const reportPath = join(import.meta.dirname, "../report.html");
+function buildTestPairs(
+  config: SuiteConfig,
+  scenarios: Scenario[]
+): Array<{ scenario: Scenario; agent: NamedAgentConfig }> {
+  const agentsByName = new Map(config.agents.map((a) => [a.name, a]));
 
-  const config = loadConfig(configPath);
-  const configs = config.agents;
-
-  // Load scenarios - filter by config.scenarios if specified, or CLI --scenario=
-  const scenarioFilter = process.argv.find((a) => a.startsWith("--scenario="))?.split("=")[1];
-  let scenarios = loadAllScenarios(scenariosDir);
-
-  if (scenarioFilter) {
-    scenarios = scenarios.filter((s) => s.name.includes(scenarioFilter));
-  } else if (config.scenarios?.length) {
-    scenarios = scenarios.filter((s) => config.scenarios!.includes(s.name));
+  if (config.matrix?.length) {
+    // Use explicit matrix
+    const pairs: Array<{ scenario: Scenario; agent: NamedAgentConfig }> = [];
+    for (const entry of config.matrix) {
+      const scenario = scenarios.find((s) => s.name === entry.scenario);
+      if (!scenario) continue;
+      const agents = entry.agents
+        ? entry.agents.map((n) => agentsByName.get(n)).filter(Boolean) as NamedAgentConfig[]
+        : config.agents;  // omit agents = all
+      for (const agent of agents) {
+        pairs.push({ scenario, agent });
+      }
+    }
+    return pairs;
   }
 
-  console.log(`Loaded ${scenarios.length} scenarios`);
-  console.log(`Testing ${configs.length} agent configurations`);
-
-  const results: TestResult[] = [];
-
+  // No matrix: all scenarios x all agents
+  const pairs: Array<{ scenario: Scenario; agent: NamedAgentConfig }> = [];
   for (const scenario of scenarios) {
-    for (const config of configs) {
-      const result = await runScenario(scenario, config, workdir);
-      results.push(result);
+    for (const agent of config.agents) {
+      pairs.push({ scenario, agent });
     }
+  }
+  return pairs;
+}
+
+async function main() {
+  const rootDir = join(import.meta.dirname, "../..");
+  const configPath = join(rootDir, "config.yaml");
+  const scenariosDir = join(import.meta.dirname, "../scenarios");
+  const workdir = join(import.meta.dirname, "../.workdir");
+  const logsDir = join(rootDir, "logs");
+  const reportPath = join(rootDir, "report.html");
+
+  const config = loadConfig(configPath);
+  let scenarios = loadAllScenarios(scenariosDir);
+
+  // CLI --scenario= filter overrides matrix
+  const scenarioFilter = process.argv.find((a) => a.startsWith("--scenario="))?.split("=")[1];
+  if (scenarioFilter) {
+    scenarios = scenarios.filter((s) => s.name.includes(scenarioFilter));
+  }
+
+  const pairs = buildTestPairs(config, scenarios);
+
+  console.log(`Running ${pairs.length} test pairs`);
+
+  const results: TestResultWithLog[] = [];
+  for (const { scenario, agent } of pairs) {
+    const result = await runScenario(scenario, agent, workdir, logsDir);
+    results.push(result);
   }
 
   printResults(results);
   generateHtmlReport(results, reportPath);
+
+  // Open report
+  execSync(`open "${reportPath}"`);
 }
 
 main().catch(console.error);

@@ -1,0 +1,37 @@
+# Agent configurations
+agents:
+  - name: opus-baseline
+    provider: anthropic
+    model: claude-opus-4-5-20251101
+    extensions: [developer]
+
+  - name: qwen3-coder
+    provider: ollama
+    model: qwen3-coder:64k
+    extensions: [developer]
+
+  - name: glm-flash
+    provider: ollama
+    model: glm-4.7-flash:latest
+    extensions: [developer]
+
+  - name: opus-with-harness
+    provider: anthropic
+    model: claude-opus-4-5-20251101
+    extensions: [developer]
+    stdioExtensions:
+      - node mcp-harness/dist/index.js
+
+# Test matrix: which scenarios run with which agents
+# Omit matrix entirely = all scenarios x all agents
+# Omit agents for a scenario = run with all agents
+# matrix:
+#   - scenario: simple-file-create
+#     agents: [opus-baseline, qwen3-coder]
+#   - scenario: edit-existing-file   # no agents = all agents
+#   - scenario: mcp-harness-workflow
+#     agents: [opus-with-harness]
+
+matrix:
+  - scenario: simple-file-create
+    agents: [opus-baseline]
