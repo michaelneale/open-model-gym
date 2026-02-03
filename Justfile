@@ -1,4 +1,4 @@
-# Goose Runner - Test Suite
+# Agent Runner - Test Suite (supports goose and opencode)
 
 # Default recipe
 default: run
@@ -7,17 +7,17 @@ default: run
 run: _install
     cd suite && npm run test
 
-# Quick test - simple-file-create + everyday-app-automation, single run each (no repetition)
+# Quick test - file-editing + everyday-app-automation, single run each (no repetition)
 test: _install
-    cd suite && npx tsx src/goose-runner.ts --scenario=simple-file-create,everyday-app-automation --agent=opus-baseline,opus-full --run-count=1
+    cd suite && npx tsx src/runner.ts --scenario=file-editing,everyday-app-automation --run-count=1
 
 # Run a specific scenario (all agents, 3 reps)
 scenario name: _install
-    cd suite && npx tsx src/goose-runner.ts --scenario={{name}}
+    cd suite && npx tsx src/runner.ts --scenario={{name}}
 
 # Run against a specific agent (all scenarios, 3 reps)
 agent name: _install
-    cd suite && npx tsx src/goose-runner.ts --agent={{name}}
+    cd suite && npx tsx src/runner.ts --agent={{name}}
 
 # Open report in browser
 report:

@@ -1,11 +1,11 @@
 {
-  "name": "goose-runner",
+  "name": "agent-runner",
   "version": "0.1.0",
   "type": "module",
   "scripts": {
     "build": "tsc",
-    "test": "tsx src/goose-runner.ts",
-    "test:scenario": "tsx src/goose-runner.ts --scenario"
+    "test": "tsx src/runner.ts",
+    "test:scenario": "tsx src/runner.ts --scenario"
   },
   "dependencies": {
     "glob": "^11.0.0",

@@ -11,6 +11,7 @@ out/
 .next/
 .nuxt/
 .output/
+.opencode-root
 
 # TypeScript
 *.tsbuildinfo

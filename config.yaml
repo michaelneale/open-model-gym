@@ -1,105 +1,51 @@
 # =============================================================================
-# Runner Configuration
+# Models - the LLMs to test
 # =============================================================================
-# runner: goose                    # Runner type (currently only "goose" supported)
-# goose-bin: /path/to/goose        # Default goose binary (used if goose-bins not specified)
-#
-# goose-bins:                      # Binaries to test - each agent runs against ALL binaries
-#   - name: release
-#     path: /Users/micn/Documents/code/goose/target/release/goose
-#   - name: default
-#     path: goose
-
-runner: goose
-goose-bins:
-  # - name: release
-  #   path: /Users/micn/Documents/code/goose/target/release/goose
-  - name: default
-    path: goose
-
-# =============================================================================
-# Agent Configurations
-# =============================================================================
-agent-config:
-  # --- Anthropic models (commented out) ---
-  # - name: opus-full
+models:
+  # - name: opus
   #   provider: anthropic
   #   model: claude-opus-4-5-20251101
-  #   extensions: [developer, todo, skills, code_execution, extensionmanager]
-  #   stdio:
-  #     - node mcp-harness/dist/index.js
 
-  # --- Ollama models ---
-  # - name: nemotron-full
-  #   provider: ollama
-  #   model: nemotron-3-nano:latest
-  #   extensions: [developer, todo, skills, code_execution, extensionmanager]
-  #   stdio:
-  #     - node mcp-harness/dist/index.js
-
-  # - name: kimi-k2.5-full
-  #   provider: ollama
-  #   model: kimi-k2.5:cloud
-  #   extensions: [developer, todo, skills, code_execution, extensionmanager]
-  #   stdio:
-  #     - node mcp-harness/dist/index.js
-
-  # - name: gpt-oss-120b-full
-  #   provider: ollama
-  #   model: gpt-oss:120b-cloud
-  #   extensions: [developer, todo, skills, code_execution, extensionmanager]
-  #   stdio:
-  #     - node mcp-harness/dist/index.js
-
-  # - name: gpt-oss-20b-full
-  #   provider: ollama
-  #   model: gpt-oss:20b
-  #   extensions: [developer, todo, skills, code_execution, extensionmanager]
-  #   stdio:
-  #     - node mcp-harness/dist/index.js
-
-  # - name: qwen3-coder-64k-full
-  #   provider: ollama
-  #   model: qwen3-coder:64k
-  #   extensions: [developer, todo, skills, code_execution, extensionmanager]
-  #   stdio:
-  #     - node mcp-harness/dist/index.js
-
-  # - name: qwen3-coder-64k-lean-code-mode
-  #   provider: ollama
-  #   model: qwen3-coder:64k
-  #   extensions: [developer, code_execution]
-
-  # - name: qwen3-coder-64k-lean
-  #   provider: ollama
-  #   model: qwen3-coder:64k
-  #   extensions: [developer]
-
-  - name: glm-4.7-flash-full
+  - name: glm-4.7-flash
     provider: ollama
     model: glm-4.7-flash:latest
+
+# =============================================================================
+# Runners - agent frameworks with their specific configurations
+# =============================================================================
+# Each runner has its own binary, extensions/config, and isolated config directory
+runners:
+  # - name: goose
+  #   type: goose
+  #   bin: goose
+  #   extensions: [developer]
+  #   stdio:
+  #     - node mcp-harness/dist/index.js
+
+  - name: goose-full
+    type: goose
+    bin: goose
     extensions: [developer, todo, skills, code_execution, extensionmanager]
     stdio:
       - node mcp-harness/dist/index.js
 
-  # - name: glm-4.7-flash-lean
-  #   provider: ollama
-  #   model: glm-4.7-flash:latest
-  #   extensions: [developer]
-
-  # - name: glm-4.7-flash-lean-code-mode
-  #   provider: ollama
-  #   model: glm-4.7-flash:latest
-  #   extensions: [developer, code_execution]
+  - name: opencode
+    type: opencode
+    bin: opencode
+    stdio:
+      - node mcp-harness/dist/index.js
 
 # =============================================================================
 # Test Matrix
 # =============================================================================
-# Which scenarios run with which agents
-# - Omit 'agents' to run against ALL active agents
-# - Specify 'agents' list to restrict to specific agents
-
+# scenarios × models × runners
+# - Omit 'models' to run against ALL models
+# - Omit 'runners' to run against ALL runners
 matrix:
-  # everyday-app-automation tests data flow between tools
   - scenario: everyday-app-automation
-    agents: [glm-4.7-flash-full]
+    models: [glm-4.7-flash]
+    runners: [goose-full, opencode]
+
+  - scenario: file-editing
+    models: [glm-4.7-flash]
+    runners: [goose-full, opencode]
