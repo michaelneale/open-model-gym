@@ -1,7 +1,7 @@
 name: file-editing
 description: Navigate a small codebase and make a targeted edit
 prompt: |
-  The User struct in src/models/user.rs is missing a display_name() method.
+  The User struct in user.rs is missing a display_name() method.
   Add a method that returns the full name formatted as "first_name last_name".
 
 tags:
