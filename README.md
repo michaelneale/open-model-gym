@@ -2,6 +2,12 @@
 
 Run agent tests across a matrix of **models × runners × scenarios** with repeated runs to catch flaky passes.
 
+## Latest Results
+
+📊 **[View Latest Report](agent-gym-report-2026-02-03.html)** — Download and open locally to see full results with embedded logs.
+
+> The report is a self-contained HTML file with all test results, validation details, and complete agent logs embedded.
+
 ## Quick Start
 
 ```bash
