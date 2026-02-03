@@ -49,6 +49,25 @@ runners:
     stdio:
       - node mcp-harness/dist/index.js
 
+  - name: goose-lean-dev
+    type: goose
+    bin: goose
+    extensions: [developer]
+
+  - name: goose-lean-code-mode
+    type: goose
+    bin: goose
+    extensions: [developer, code_execution]
+
+
+  - name: goose-lean-full
+    type: goose
+    bin: goose
+    extensions: [developer]
+    stdio:
+      - node mcp-harness/dist/index.js
+
+
   - name: opencode
     type: opencode
     bin: opencode
@@ -64,10 +83,12 @@ runners:
 matrix:
   # everyday-app-automation runs against all models and all runners
   - scenario: everyday-app-automation
+    runners: [goose-lean-full, goose-full]
 
   # file-editing runs against all models and all runners
-  - scenario: file-editing
+  #- scenario: file-editing
+  #  runners: [goose-lean-dev, goose-lean-code-mode]
 
   # multi-turn-edit only runs on goose (only goose supports multi-turn)
-  - scenario: multi-turn-edit
-    runners: [goose-full]
+  #- scenario: multi-turn-edit
+ #   runners: [goose-lean-dev, goose-lean-code-mode]

@@ -49,6 +49,8 @@ interface TestPair {
 interface TestResultWithLog extends TestResult {
   logFile: string;
   runnerName: string;
+  toolCalls: number;
+  turns: number;
 }
 
 // =============================================================================
@@ -330,6 +332,38 @@ function setupWorkdir(scenario: Scenario, workdir: string): void {
 }
 
 // =============================================================================
+// Log Metrics Parsing
+// =============================================================================
+
+function parseLogMetrics(logContent: string, workdir?: string): { toolCalls: number; turns: number } {
+  // First, try to read tool-calls.log from MCP harness (most accurate)
+  let mcpToolCalls = 0;
+  if (workdir) {
+    try {
+      const toolCallsLog = readFileSync(join(workdir, "tool-calls.log"), "utf-8");
+      // Each line is a JSON object representing one tool call
+      mcpToolCalls = toolCallsLog.trim().split("\n").filter(line => line.trim()).length;
+    } catch (e) {
+      // tool-calls.log doesn't exist, fall back to log parsing
+    }
+  }
+
+  // Goose format: ─── tool_name | extension ───
+  const gooseToolCalls = (logContent.match(/─── .+ \| .+ ───/g) || []).length;
+  
+  // OpenCode format: TURN N
+  const opencodeTurns = (logContent.match(/^TURN \d+$/gm) || []).length;
+  
+  // Total tool calls = MCP harness calls + Goose built-in tool calls
+  const toolCalls = mcpToolCalls + gooseToolCalls;
+
+  // For OpenCode, use explicit TURN markers
+  const turns = opencodeTurns > 0 ? opencodeTurns : Math.ceil(toolCalls / 3); // Estimate ~3 tool calls per turn
+  
+  return { toolCalls, turns };
+}
+
+// =============================================================================
 // Test Execution
 // =============================================================================
 
@@ -468,11 +502,14 @@ async function runScenario(
 
     writeFileSync(logFile, output);
 
+    const metrics = parseLogMetrics(output, workdir);
     return {
       run: { ...run, status: allPassed ? "passed" : "failed" },
       validations: allValidations,
       logFile,
       runnerName: runner.name,
+      toolCalls: metrics.toolCalls,
+      turns: metrics.turns,
     };
   } catch (err) {
     const errorOutput = output + "\n\nERROR:\n" + String(err);
@@ -488,6 +525,8 @@ async function runScenario(
       validations: allValidations,
       logFile,
       runnerName: runner.name,
+      toolCalls: parseLogMetrics(errorOutput, workdir).toolCalls,
+      turns: parseLogMetrics(errorOutput, workdir).turns,
     };
   }
 }
@@ -535,6 +574,14 @@ function generateHtmlReport(
       } catch (e) { /* ignore missing logs */ }
     }
   }
+
+  // Calculate max duration for scaling bars
+  const maxDuration = Math.max(...results.map(r => {
+    if (!r.run.endTime || !r.run.startTime) return 0;
+    return (r.run.endTime.getTime() - r.run.startTime.getTime()) / 1000;
+  }), 1);
+  
+  const maxToolCalls = Math.max(...results.map(r => r.toolCalls || 0), 1);
 
   // Get all scenarios (columns)
   const scenarios = allPairs.length
@@ -616,6 +663,13 @@ function generateHtmlReport(
     .duration { color: #8b949e; font-size: 0.85rem; }
     .log-link { color: #58a6ff; font-size: 0.75rem; text-decoration: none; }
     .log-link:hover { text-decoration: underline; }
+    .duration-bar { height: 4px; background: #30363d; border-radius: 2px; margin-top: 4px; overflow: hidden; }
+    .duration-bar-fill { height: 100%; background: #58a6ff; border-radius: 2px; }
+    .tool-bar { height: 4px; background: #30363d; border-radius: 2px; margin-top: 2px; overflow: hidden; }
+    .tool-bar-fill { height: 100%; background: #d29922; border-radius: 2px; }
+    .metrics { display: flex; gap: 0.5rem; font-size: 0.7rem; color: #8b949e; margin-top: 2px; }
+    .metrics .tool-calls { color: #d29922; }
+    .metrics .turns { color: #a371f7; }
     .details { font-size: 0.8rem; max-width: 300px; }
     .validation { display: flex; align-items: center; gap: 0.25rem; margin-top: 0.25rem; }
     .validation.pass { color: #3fb950; }
@@ -711,6 +765,12 @@ function generateHtmlReport(
                   <span class="status ${r.run.status}">${r.run.status === "passed" ? "✓" : "✗"}</span>
                   <span class="duration">${duration}s</span>
                   ${logPath ? `<a class="log-link" href="${logPath}" onclick="event.preventDefault();showLog('${basename(r.logFile!)}')">log</a>` : ""}
+                </div>
+                <div class="duration-bar"><div class="duration-bar-fill" style="width: ${Math.round((parseFloat(duration) / maxDuration) * 100)}%"></div></div>
+                <div class="tool-bar"><div class="tool-bar-fill" style="width: ${Math.round(((r.toolCalls || 0) / maxToolCalls) * 100)}%"></div></div>
+                <div class="metrics">
+                  <span class="tool-calls" title="Tool calls">🔧 ${r.toolCalls || 0}</span>
+                  <span class="turns" title="Turns">↻ ${r.turns || 0}</span>
                 </div>
                 <div class="details">${validationHtml}</div>
               </td>`;
