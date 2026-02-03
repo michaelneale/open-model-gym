@@ -516,6 +516,26 @@ function generateHtmlReport(
 ): void {
   const { isRunning = false, allPairs = [] } = options;
 
+  // Read and embed gym.png as base64
+  const rootDir = join(outputPath, "..");
+  let gymBase64 = "";
+  try {
+    const gymPath = join(rootDir, "gym.png");
+    gymBase64 = readFileSync(gymPath).toString("base64");
+  } catch (e) {
+    // gym.png not found, will use external reference
+  }
+
+  // Collect all logs for embedding
+  const logsData: Record<string, string> = {};
+  for (const r of results) {
+    if (r.logFile) {
+      try {
+        logsData[basename(r.logFile)] = readFileSync(r.logFile, "utf-8");
+      } catch (e) { /* ignore missing logs */ }
+    }
+  }
+
   // Get all scenarios (columns)
   const scenarios = allPairs.length
     ? [...new Set(allPairs.map((p) => p.scenario.name))]
@@ -613,10 +633,21 @@ function generateHtmlReport(
     .header { display: flex; align-items: center; gap: 1rem; margin-bottom: 0.5rem; }
     .header img { height: 48px; width: auto; }
     .header h1 { margin: 0; }
+    .download-btn { background: #238636; color: white; border: none; padding: 0.5rem 1rem; border-radius: 6px; cursor: pointer; font-size: 0.9rem; margin-left: auto; }
+    .download-btn:hover { background: #2ea043; }
+    .modal { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.8); z-index: 100; }
+    .modal.open { display: flex; align-items: center; justify-content: center; }
+    .modal-content { background: #161b22; border: 1px solid #30363d; border-radius: 8px; width: 90%; max-width: 1200px; max-height: 90%; display: flex; flex-direction: column; }
+    .modal-header { display: flex; align-items: center; justify-content: space-between; padding: 1rem; border-bottom: 1px solid #30363d; }
+    .modal-header h2 { margin: 0; color: #58a6ff; font-size: 1rem; }
+    .modal-close { background: none; border: none; color: #8b949e; font-size: 1.5rem; cursor: pointer; }
+    .modal-close:hover { color: #c9d1d9; }
+    .modal-body { padding: 1rem; overflow: auto; flex: 1; }
+    .modal-body pre { margin: 0; white-space: pre-wrap; word-wrap: break-word; font-family: monospace; font-size: 0.85rem; color: #c9d1d9; }
   </style>
 </head>
 <body>
-  <div class="header"><img src="gym.png" alt="Agent Gym"><h1>Agent Gym Workout${isRunning ? " (Running...)" : ""}</h1></div>
+  <div class="header"><img src="${gymBase64 ? `data:image/png;base64,${gymBase64}` : 'gym.png'}" alt="Agent Gym"><h1>Agent Gym Workout${isRunning ? " (Running...)" : ""}</h1>${!isRunning ? '<button class="download-btn" onclick="downloadReport()">📥 Download Full Report</button>' : ''}</div>
   <p class="summary">
     <span class="passed">${passed} passed</span> / 
     <span class="failed">${failed} failed</span>${pending > 0 ? ` / <span style="color:#9e6a03">${pending} pending</span>` : ""} / 
@@ -679,7 +710,7 @@ function generateHtmlReport(
                 <div class="cell">
                   <span class="status ${r.run.status}">${r.run.status === "passed" ? "✓" : "✗"}</span>
                   <span class="duration">${duration}s</span>
-                  ${logPath ? `<a class="log-link" href="${logPath}">log</a>` : ""}
+                  ${logPath ? `<a class="log-link" href="${logPath}" onclick="event.preventDefault();showLog('${basename(r.logFile!)}')">log</a>` : ""}
                 </div>
                 <div class="details">${validationHtml}</div>
               </td>`;
@@ -691,6 +722,50 @@ function generateHtmlReport(
   </table>
   
   <p class="timestamp">Generated: ${new Date().toISOString()}</p>
+
+  <!-- Log Modal -->
+  <div id="logModal" class="modal" onclick="if(event.target===this)closeModal()">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h2 id="modalTitle">Log</h2>
+        <button class="modal-close" onclick="closeModal()">&times;</button>
+      </div>
+      <div class="modal-body">
+        <pre id="modalLog"></pre>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    const LOGS = ${JSON.stringify(logsData)};
+    
+    function showLog(logName) {
+      const log = LOGS[logName];
+      if (!log) return;
+      document.getElementById('modalTitle').textContent = logName;
+      document.getElementById('modalLog').textContent = log;
+      document.getElementById('logModal').classList.add('open');
+    }
+    
+    function closeModal() {
+      document.getElementById('logModal').classList.remove('open');
+    }
+    
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape') closeModal();
+    });
+    
+    function downloadReport() {
+      const html = document.documentElement.outerHTML;
+      const blob = new Blob(['<!DOCTYPE html>' + html], { type: 'text/html' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = 'agent-gym-report-' + new Date().toISOString().slice(0,10) + '.html';
+      a.click();
+      URL.revokeObjectURL(url);
+    }
+  </script>
 </body>
 </html>`;
 
@@ -758,6 +833,17 @@ async function main() {
   }
 
   const pairs = buildTestPairs(config, scenarios);
+
+  // Sort pairs by model name so same models run together (keeps model loaded in memory)
+  pairs.sort((a, b) => a.model.name.localeCompare(b.model.name));
+
+  // Show model grouping
+  const modelOrder = [...new Set(pairs.map(p => p.model.name))];
+  console.log(`\nExecution order (grouped by model for efficiency):`);
+  for (const m of modelOrder) {
+    const count = pairs.filter(p => p.model.name === m).length;
+    console.log(`  ${m}: ${count} tests`);
+  }
 
   // CLI --run-count=N (default 3)
   const runCountArg = process.argv.find((a) => a.startsWith("--run-count="))?.split("=")[1];
