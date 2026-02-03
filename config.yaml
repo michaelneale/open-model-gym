@@ -2,9 +2,9 @@
 # Models - the LLMs to test
 # =============================================================================
 models:
-  # - name: opus
-  #   provider: anthropic
-  #   model: claude-opus-4-5-20251101
+  - name: opus
+    provider: anthropic
+    model: claude-opus-4-5-20251101
 
   - name: glm-4.7-flash
     provider: ollama
@@ -42,10 +42,10 @@ runners:
 # - Omit 'models' to run against ALL models
 # - Omit 'runners' to run against ALL runners
 matrix:
-  - scenario: everyday-app-automation
-    models: [glm-4.7-flash]
-    runners: [goose-full, opencode]
+  #- scenario: everyday-app-automation
+  #  models: [glm-4.7-flash]
+  #  runners: [goose-full, opencode]
 
   - scenario: file-editing
-    models: [glm-4.7-flash]
+    models: [opus]
     runners: [goose-full, opencode]

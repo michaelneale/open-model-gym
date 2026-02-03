@@ -74,24 +74,35 @@ validate:
   # The edit was made to the correct file
   - type: file_exists
     path: src/models/user.rs
+    name: user.rs exists
   # Method was added
   - type: file_matches
     path: src/models/user.rs
     regex: "fn\\s+display_name"
+    name: display_name() added
   # Method returns a String or &str
   - type: file_matches
     path: src/models/user.rs
     regex: "display_name.*->.*String|display_name.*->.*str"
+    name: has return type
   # Original code preserved
   - type: file_contains
     path: src/models/user.rs
     pattern: "pub fn email"
+    name: email() preserved
   - type: file_contains
     path: src/models/user.rs
     pattern: "pub fn first_name"
+    name: first_name() preserved
   # Other files untouched
   - type: file_exists
     path: src/main.rs
+    name: main.rs exists
   - type: file_contains
     path: src/main.rs
     pattern: "mod models"
+    name: main.rs unchanged
+  # Code compiles
+  - type: command_succeeds
+    command: "cargo build"
+    name: cargo build

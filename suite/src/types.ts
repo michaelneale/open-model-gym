@@ -24,13 +24,13 @@ export interface Scenario {
 }
 
 export type ValidationRule =
-  | { type: "file_exists"; path: string }
-  | { type: "file_contains"; path: string; pattern: string }
-  | { type: "file_matches"; path: string; regex: string }
-  | { type: "file_not_empty"; path: string }
-  | { type: "command_succeeds"; command: string }
-  | { type: "tool_called"; tool: string; args?: Record<string, string | RegExp> }
-  | { type: "custom"; fn: string };
+  | { type: "file_exists"; path: string; name?: string }
+  | { type: "file_contains"; path: string; pattern: string; name?: string }
+  | { type: "file_matches"; path: string; regex: string; name?: string }
+  | { type: "file_not_empty"; path: string; name?: string }
+  | { type: "command_succeeds"; command: string; name?: string }
+  | { type: "tool_called"; tool: string; args?: Record<string, string | RegExp>; name?: string }
+  | { type: "custom"; fn: string; name?: string };
 
 export interface TestRun {
   scenario: Scenario;

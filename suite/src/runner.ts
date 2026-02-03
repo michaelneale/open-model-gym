@@ -569,9 +569,11 @@ function generateHtmlReport(
             const validationHtml = r.validations.map((v) => {
               const icon = v.passed ? "✓" : "✗";
               const cls = v.passed ? "pass" : "fail";
-              const ruleLabel = v.rule.type === "tool_called" 
-                ? `tool_called: ${(v.rule as any).tool}`
-                : v.rule.type + (("path" in v.rule) ? `: ${(v.rule as any).path}` : "");
+              const ruleLabel = (v.rule as any).name 
+                ? (v.rule as any).name
+                : v.rule.type === "tool_called" 
+                  ? `tool_called: ${(v.rule as any).tool}`
+                  : v.rule.type + (("path" in v.rule) ? `: ${(v.rule as any).path}` : "");
               return `<div class="validation ${cls}"><span class="validation-icon">${icon}</span> ${ruleLabel}</div>`;
             }).join("");
             return `<td>
