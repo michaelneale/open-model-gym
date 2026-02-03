@@ -91,7 +91,8 @@ const GOOSE_CONFIG_DIR = join(GOOSE_ROOT, "config");
 async function runAgent(
   config: AgentConfig,
   prompt: string,
-  workdir: string
+  workdir: string,
+  defaultGooseBin?: string
 ): Promise<string> {
   // Write prompt to a temp file for -i flag
   const promptFile = join(workdir, ".goose-prompt.txt");
@@ -104,7 +105,8 @@ async function runAgent(
 
   const args = ["run", "-i", promptFile, "--no-session"];
 
-  const cmd = `goose ${args.join(" ")}`;
+  const gooseBin = config["goose-bin"] || defaultGooseBin || "goose";
+  const cmd = `${gooseBin} ${args.join(" ")}`;
   console.log(`  Running: ${cmd}`);
 
   const output = execSync(cmd, {
@@ -142,7 +144,8 @@ async function runScenario(
   config: AgentConfig,
   baseWorkdir: string,
   logsDir: string,
-  attempt: number = 1
+  attempt: number = 1,
+  defaultGooseBin?: string
 ): Promise<TestResultWithLog> {
   const testId = `${scenario.name}_${config.provider}_${config.model}`.replace(/[\/\\:]/g, "_");
   const workdir = join(baseWorkdir, testId);
@@ -163,7 +166,7 @@ async function runScenario(
 
   let output = "";
   try {
-    output = await runAgent(config, scenario.prompt, workdir);
+    output = await runAgent(config, scenario.prompt, workdir, defaultGooseBin);
     run.endTime = new Date();
 
     const validations = validateAll(scenario.validate, workdir);
@@ -242,6 +245,8 @@ function agentConfigKey(config: AgentConfig): string {
 interface ReportOptions {
   isRunning?: boolean;
   allPairs?: Array<{ scenario: Scenario; agent: NamedAgentConfig }>;
+  runner?: string;
+  defaultGooseBin?: string;  // config-level default (agents may override)
 }
 
 function generateHtmlReport(
@@ -249,7 +254,7 @@ function generateHtmlReport(
   outputPath: string,
   options: ReportOptions = {}
 ): void {
-  const { isRunning = false, allPairs = [] } = options;
+  const { isRunning = false, allPairs = [], runner = "goose", defaultGooseBin = "goose" } = options;
 
   // Get all scenarios and configs from pairs (if provided) or results
   const scenarios = allPairs.length
@@ -314,8 +319,8 @@ function generateHtmlReport(
     .config-header .model { display: block; color: #c9d1d9; font-weight: 600; }
     .config-header .provider { color: #8b949e; }
     .config-header .extensions { display: block; color: #7ee787; font-size: 0.7rem; }
-    .legend { margin-top: 2rem; display: flex; gap: 2rem; }
-    .legend-item { display: flex; align-items: center; gap: 0.5rem; color: #8b949e; }
+    .runner-info { color: #6e7681; font-size: 0.85rem; margin-bottom: 1.5rem; }
+    .runner-info code { background: #21262d; padding: 0.2rem 0.4rem; border-radius: 4px; font-family: monospace; }
     .timestamp { color: #6e7681; font-size: 0.9rem; margin-top: 2rem; }
   </style>
 </head>
@@ -326,6 +331,7 @@ function generateHtmlReport(
     <span class="failed">${failed} failed</span>${pending > 0 ? ` / <span style="color:#9e6a03">${pending} pending</span>` : ""} / 
     ${total} total
   </p>
+  <p class="runner-info">Runner: ${runner} | Default binary: <code>${defaultGooseBin}</code></p>
   
   <table>
     <thead>
@@ -380,11 +386,6 @@ function generateHtmlReport(
     </tbody>
   </table>
   
-  <div class="legend">
-    <div class="legend-item"><span class="status passed">✓</span> Passed</div>
-    <div class="legend-item"><span class="status failed">✗</span> Failed</div>
-  </div>
-  
   <p class="timestamp">Generated: ${new Date().toISOString()}</p>
 </body>
 </html>`;
@@ -401,6 +402,10 @@ interface MatrixEntry {
 interface SuiteConfig {
   "agent-config": NamedAgentConfig[];
   matrix?: MatrixEntry[];
+  /** Runner type (currently only "goose" supported) */
+  runner?: "goose";
+  /** Default goose binary path (agents can override) */
+  "goose-bin"?: string;
 }
 
 function loadConfig(configPath: string): SuiteConfig {
@@ -492,11 +497,14 @@ async function main() {
   const runCountArg = process.argv.find((a) => a.startsWith("--run-count="))?.split("=")[1];
   const RUN_COUNT = runCountArg ? parseInt(runCountArg, 10) : 3;
 
+  const runner = config.runner || "goose";
+  const defaultBin = config["goose-bin"] || runner;
+  console.log(`Runner: ${runner} (bin: ${defaultBin})`);
   console.log(`Running ${pairs.length} test pairs (${RUN_COUNT}x each, worst result kept)`);
 
   // Generate initial report with all pending and open browser
   const results: TestResultWithLog[] = [];
-  generateHtmlReport(results, reportPath, { isRunning: true, allPairs: pairs });
+  generateHtmlReport(results, reportPath, { isRunning: true, allPairs: pairs, runner, defaultGooseBin: defaultBin });
   
   // CLI --no-open to skip opening browser (useful for chained runs)
   const noOpen = process.argv.includes("--no-open");
@@ -509,7 +517,7 @@ async function main() {
 
     for (let attempt = 1; attempt <= RUN_COUNT; attempt++) {
       console.log(`  Attempt ${attempt}/${RUN_COUNT}`);
-      const result = await runScenario(scenario, agent, workdir, logsDir, attempt);
+      const result = await runScenario(scenario, agent, workdir, logsDir, attempt, config["goose-bin"]);
 
       // Keep the worst result (failed > passed, or fewer validations passed)
       if (!worstResult) {
@@ -530,11 +538,11 @@ async function main() {
 
     results.push(worstResult!);
     // Update report after each test pair completes
-    generateHtmlReport(results, reportPath, { isRunning: true, allPairs: pairs });
+    generateHtmlReport(results, reportPath, { isRunning: true, allPairs: pairs, runner, defaultGooseBin: defaultBin });
   }
 
   // Final report without auto-refresh
-  generateHtmlReport(results, reportPath, { isRunning: false, allPairs: pairs });
+  generateHtmlReport(results, reportPath, { isRunning: false, allPairs: pairs, runner, defaultGooseBin: defaultBin });
   printResults(results);
 }
 

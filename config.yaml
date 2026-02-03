@@ -1,4 +1,25 @@
-# Agent configurations
+# =============================================================================
+# Runner Configuration
+# =============================================================================
+# runner: goose                    # Runner type (currently only "goose" supported)
+# goose-bin: /path/to/goose        # Default goose binary (agents can override)
+#                                  # Examples:
+#                                  #   goose-bin: goose              (use PATH)
+#                                  #   goose-bin: ./target/release/goose
+#                                  #   goose-bin: /usr/local/bin/goose-dev
+
+# =============================================================================
+# Agent Configurations
+# =============================================================================
+# Each agent can override goose-bin:
+#   - name: my-agent
+#     provider: anthropic
+#     model: claude-opus-4-5-20251101
+#     goose-bin: ./my-custom-goose   # Takes precedence over config-level default
+
+runner: goose
+goose-bin: /Users/micn/Documents/code/goose/target/release/goose
+
 agent-config:
   - name: opus-baseline
     provider: anthropic
