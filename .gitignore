@@ -16,7 +16,7 @@ out/
 # TypeScript
 *.tsbuildinfo
 *.d.ts.map
-
+.g3/
 # Logs
 logs/
 *.log

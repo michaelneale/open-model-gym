@@ -1,32 +1,97 @@
 name: file-editing
-description: Create a new file and edit an existing file
+description: Navigate a small codebase and make a targeted edit
 prompt: |
-  1. Create a file called joke.md containing a short joke
-  2. Edit hello.rs to add a debug function that prints all arguments
+  The User struct in src/models/user.rs is missing a display_name() method.
+  Add a method that returns the full name formatted as "first_name last_name".
 
 tags:
-  - simple
-  - file-creation
   - file-editing
+  - code-navigation
 
 setup:
-  hello.rs: |
+  Cargo.toml: |
+    [package]
+    name = "user-service"
+    version = "0.1.0"
+    edition = "2021"
+
+  src/main.rs: |
+    mod models;
+    mod utils;
+
+    use models::user::User;
+
     fn main() {
-        println!("Hello, world!");
+        let user = User::new("Alice", "Smith", "alice@example.com");
+        println!("Created user: {}", user.email());
+    }
+
+  src/models/mod.rs: |
+    pub mod user;
+
+  src/models/user.rs: |
+    pub struct User {
+        first_name: String,
+        last_name: String,
+        email: String,
+    }
+
+    impl User {
+        pub fn new(first_name: &str, last_name: &str, email: &str) -> Self {
+            Self {
+                first_name: first_name.to_string(),
+                last_name: last_name.to_string(),
+                email: email.to_string(),
+            }
+        }
+
+        pub fn email(&self) -> &str {
+            &self.email
+        }
+
+        pub fn first_name(&self) -> &str {
+            &self.first_name
+        }
+
+        pub fn last_name(&self) -> &str {
+            &self.last_name
+        }
+    }
+
+  src/utils/mod.rs: |
+    pub mod formatting;
+
+  src/utils/formatting.rs: |
+    pub fn capitalize(s: &str) -> String {
+        let mut chars = s.chars();
+        match chars.next() {
+            None => String::new(),
+            Some(c) => c.to_uppercase().collect::<String>() + chars.as_str(),
+        }
     }
 
 validate:
-  # New file creation
+  # The edit was made to the correct file
   - type: file_exists
-    path: joke.md
-  - type: file_not_empty
-    path: joke.md
-  # Existing file edit
-  - type: file_exists
-    path: hello.rs
+    path: src/models/user.rs
+  # Method was added
   - type: file_matches
-    path: hello.rs
-    regex: "fn\\s+debug"
+    path: src/models/user.rs
+    regex: "fn\\s+display_name"
+  # Method returns a String or &str
+  - type: file_matches
+    path: src/models/user.rs
+    regex: "display_name.*->.*String|display_name.*->.*str"
+  # Original code preserved
   - type: file_contains
-    path: hello.rs
-    pattern: "fn main"
+    path: src/models/user.rs
+    pattern: "pub fn email"
+  - type: file_contains
+    path: src/models/user.rs
+    pattern: "pub fn first_name"
+  # Other files untouched
+  - type: file_exists
+    path: src/main.rs
+  - type: file_contains
+    path: src/main.rs
+    pattern: "mod models"
