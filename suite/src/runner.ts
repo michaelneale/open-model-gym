@@ -532,6 +532,17 @@ function generateHtmlReport(
     rowsByKey.set(pairKey(pair), { model: pair.model, runner: pair.runner });
   }
 
+  // Group rows by model for rowspan display
+  const modelKey = (m: ModelConfig) => `${m.provider}/${m.model}`;
+  const modelGroups = new Map<string, string[]>();  // modelKey -> rowKeys[]
+  for (const key of rowKeys) {
+    const row = rowsByKey.get(key);
+    if (!row) continue;
+    const mk = modelKey(row.model);
+    if (!modelGroups.has(mk)) modelGroups.set(mk, []);
+    modelGroups.get(mk)!.push(key);
+  }
+
   // Build set of valid (scenario, rowKey) combinations from the matrix
   const validCells = new Set<string>();
   for (const pair of allPairs) {
@@ -561,7 +572,7 @@ function generateHtmlReport(
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   ${isRunning ? '<meta http-equiv="refresh" content="3">' : ""}
-  <title>${isRunning ? "Running..." : "Results"} - Agent Tests</title>
+  <title>${isRunning ? "Running..." : "Results"} - Agent Gym Workout</title>
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; }
     body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #0d1117; color: #c9d1d9; padding: 2rem; }
@@ -594,78 +605,87 @@ function generateHtmlReport(
     .row-header .model { display: block; color: #c9d1d9; font-weight: 600; }
     .row-header .runner { color: #58a6ff; }
     .row-header .runner-type { color: #8b949e; font-size: 0.7rem; }
+    .model-cell { vertical-align: middle; background: #1c2128 !important; border-right: 2px solid #30363d; }
+    .model-group-start { border-top: 2px solid #30363d; }
     .runner-info { color: #6e7681; font-size: 0.85rem; margin-bottom: 1.5rem; }
     .runner-info code { background: #21262d; padding: 0.2rem 0.4rem; border-radius: 4px; font-family: monospace; }
     .timestamp { color: #6e7681; font-size: 0.9rem; margin-top: 2rem; }
+    .header { display: flex; align-items: center; gap: 1rem; margin-bottom: 0.5rem; }
+    .header img { height: 48px; width: auto; }
+    .header h1 { margin: 0; }
   </style>
 </head>
 <body>
-  <h1>Agent Scenario Test Results${isRunning ? " (Running...)" : ""}</h1>
+  <div class="header"><img src="gym.png" alt="Agent Gym"><h1>Agent Gym Workout${isRunning ? " (Running...)" : ""}</h1></div>
   <p class="summary">
     <span class="passed">${passed} passed</span> / 
     <span class="failed">${failed} failed</span>${pending > 0 ? ` / <span style="color:#9e6a03">${pending} pending</span>` : ""} / 
     ${total} total
   </p>
-  <p class="runner-info">Runners: ${runnerNames.map(n => `<code>${n}</code>`).join(", ")}</p>
+  <p class="runner-info">Agent Configurations: ${runnerNames.map(n => `<code>${n}</code>`).join(", ")}</p>
   
   <table>
     <thead>
       <tr>
         <th>Model</th>
-        <th>Runner</th>
+        <th>Agent Configuration</th>
         ${scenarios.map((s) => `<th>${s}</th>`).join("")}
       </tr>
     </thead>
     <tbody>
-      ${rowKeys.map((key) => {
-        const row = rowsByKey.get(key);
-        if (!row) return "";
-        const { model, runner } = row;
-        return `
-        <tr>
-          <td><div class="row-header">
-            <span class="model">${model.provider}/${model.model}</span>
-          </div></td>
-          <td><div class="row-header">
-            <span class="runner">${runner.name}</span>
-            <span class="runner-type">(${runner.type})</span>
-          </div></td>
-          ${scenarios.map((scenario) => {
-            const r = getResult(scenario, key);
-            if (!r) {
-              // Check if this combination is in the matrix
-              const cellKey = `${scenario}::${key}`;
-              const isInMatrix = validCells.has(cellKey);
-              if (!isInMatrix) return `<td><div class="cell"><span class="status na">—</span></div></td>`;
-              return `<td><div class="cell"><span class="status pending">⋯</span></div></td>`;
-            }
-            if (r.run.status === "running") {
-              return `<td><div class="cell"><span class="status running">...</span></div></td>`;
-            }
-            const duration = r.run.endTime
-              ? ((r.run.endTime.getTime() - r.run.startTime.getTime()) / 1000).toFixed(1)
-              : "-";
-            const logPath = r.logFile ? `logs/${basename(r.logFile)}` : "";
-            const validationHtml = r.validations.map((v) => {
-              const icon = v.passed ? "✓" : "✗";
-              const cls = v.passed ? "pass" : "fail";
-              const ruleLabel = (v.rule as any).name 
-                ? (v.rule as any).name
-                : v.rule.type === "tool_called" 
-                  ? `tool_called: ${(v.rule as any).tool}`
-                  : v.rule.type + (("path" in v.rule) ? `: ${(v.rule as any).path}` : "");
-              return `<div class="validation ${cls}"><span class="validation-icon">${icon}</span> ${ruleLabel}</div>`;
-            }).join("");
-            return `<td>
-              <div class="cell">
-                <span class="status ${r.run.status}">${r.run.status === "passed" ? "✓" : "✗"}</span>
-                <span class="duration">${duration}s</span>
-                ${logPath ? `<a class="log-link" href="${logPath}">log</a>` : ""}
-              </div>
-              <div class="details">${validationHtml}</div>
-            </td>`;
-          }).join("")}
-        </tr>`;
+      ${[...modelGroups.entries()].map(([mk, keys]) => {
+        return keys.map((key, idx) => {
+          const row = rowsByKey.get(key);
+          if (!row) return "";
+          const { model, runner } = row;
+          const isFirst = idx === 0;
+          const rowspan = keys.length;
+          return `
+          <tr class="${isFirst ? 'model-group-start' : ''}">
+            ${isFirst ? `<td class="model-cell" rowspan="${rowspan}"><div class="row-header">
+              <span class="model">${model.provider}/${model.model}</span>
+            </div></td>` : ''}
+            <td><div class="row-header">
+              <span class="runner">${runner.name}</span>
+              <span class="runner-type">(${runner.type})</span>
+            </div></td>
+            ${scenarios.map((scenario) => {
+              const r = getResult(scenario, key);
+              if (!r) {
+                // Check if this combination is in the matrix
+                const cellKey = `${scenario}::${key}`;
+                const isInMatrix = validCells.has(cellKey);
+                if (!isInMatrix) return `<td><div class="cell"><span class="status na">—</span></div></td>`;
+                return `<td><div class="cell"><span class="status pending">⋯</span></div></td>`;
+              }
+              if (r.run.status === "running") {
+                return `<td><div class="cell"><span class="status running">...</span></div></td>`;
+              }
+              const duration = r.run.endTime
+                ? ((r.run.endTime.getTime() - r.run.startTime.getTime()) / 1000).toFixed(1)
+                : "-";
+              const logPath = r.logFile ? `logs/${basename(r.logFile)}` : "";
+              const validationHtml = r.validations.map((v) => {
+                const icon = v.passed ? "✓" : "✗";
+                const cls = v.passed ? "pass" : "fail";
+                const ruleLabel = (v.rule as any).name 
+                  ? (v.rule as any).name
+                  : v.rule.type === "tool_called" 
+                    ? `tool_called: ${(v.rule as any).tool}`
+                    : v.rule.type + (("path" in v.rule) ? `: ${(v.rule as any).path}` : "");
+                return `<div class="validation ${cls}"><span class="validation-icon">${icon}</span> ${ruleLabel}</div>`;
+              }).join("");
+              return `<td>
+                <div class="cell">
+                  <span class="status ${r.run.status}">${r.run.status === "passed" ? "✓" : "✗"}</span>
+                  <span class="duration">${duration}s</span>
+                  ${logPath ? `<a class="log-link" href="${logPath}">log</a>` : ""}
+                </div>
+                <div class="details">${validationHtml}</div>
+              </td>`;
+            }).join("")}
+          </tr>`;
+        }).join("");
       }).join("")}
     </tbody>
   </table>
