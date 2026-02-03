@@ -103,6 +103,7 @@ const fakeSlackMessages = [
   { channel: 'C002', user: 'U005', text: 'Just merged the new auth PR', ts: '1706885400.000300' },
   { channel: 'C002', user: 'U001', text: 'Great work! Any breaking changes?', ts: '1706885460.000400' },
   { channel: 'C003', user: 'U002', text: 'Closed the MegaCorp deal! 🎉', ts: '1706884800.000500' },
+  { channel: 'C001', user: 'U004', text: 'Please review the quarterly review document I shared. Key metrics show 15% growth.', ts: '1706886100.000600' },
 ];
 
 const fakeCalendarEvents = [

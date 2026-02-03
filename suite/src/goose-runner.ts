@@ -365,8 +365,8 @@ function generateHtmlReport(
   <table>
     <thead>
       <tr>
-        <th>Agent</th>
-        <th>Binary</th>
+        <th>Agent Config</th>
+                <th>Agent</th>
         ${scenarios.map((scenario) => `<th>${scenario}</th>`).join("")}
       </tr>
     </thead>

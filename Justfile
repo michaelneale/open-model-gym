@@ -32,7 +32,8 @@ install:
 build: _install
     cd suite && npm run build
 
-# Internal: install if node_modules missing
+# Internal: install if node_modules missing, always rebuild mcp-harness
 _install:
     @[ -d suite/node_modules ] || (cd suite && npm install)
-    @[ -d mcp-harness/node_modules ] || (cd mcp-harness && npm install && npm run build)
+    @[ -d mcp-harness/node_modules ] || (cd mcp-harness && npm install)
+    @cd mcp-harness && npm run build

@@ -1,4 +1,4 @@
-name: simple-file-create
+name: file-editing
 description: Create a new file and edit an existing file
 prompt: |
   1. Create a file called joke.md containing a short joke
