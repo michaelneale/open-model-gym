@@ -4,7 +4,7 @@ import { join, basename } from "node:path";
 import { execSync } from "node:child_process";
 import { parse, stringify } from "yaml";
 import { readFileSync } from "node:fs";
-import type { Scenario, TestResult, TestRun } from "./types.js";
+import type { Scenario, TestResult, TestRun, Turn } from "./types.js";
 import { validateAll } from "./validator.js";
 
 // =============================================================================
@@ -116,7 +116,9 @@ async function runGooseAgent(
   model: ModelConfig,
   runner: RunnerConfig,
   prompt: string,
-  workdir: string
+  workdir: string,
+  sessionName?: string,  // If provided, use/continue this session
+  resume: boolean = false  // If true, resume existing session (for turn 2+)
 ): Promise<string> {
   const promptFile = join(workdir, ".goose-prompt.txt");
   writeFileSync(promptFile, prompt);
@@ -126,8 +128,20 @@ async function runGooseAgent(
   const gooseConfig = generateGooseConfig(model, runner);
   writeFileSync(join(GOOSE_CONFIG_DIR, "config.yaml"), stringify(gooseConfig));
 
-  const cmd = `${runner.bin} run -i "${promptFile}" --no-session`;
-  console.log(`  Running: ${runner.bin} run -i <prompt> --no-session`);
+  let cmd: string;
+  if (sessionName) {
+    if (resume) {
+      cmd = `${runner.bin} run -i "${promptFile}" --name "${sessionName}" --resume`;
+      console.log(`  Running: ${runner.bin} run -i <prompt> --name "${sessionName}" --resume`);
+    } else {
+      // First turn: create new session with this name
+      cmd = `${runner.bin} run -i "${promptFile}" --name "${sessionName}"`;
+      console.log(`  Running: ${runner.bin} run -i <prompt> --name "${sessionName}"`);
+    }
+  } else {
+    cmd = `${runner.bin} run -i "${promptFile}" --no-session`;
+    console.log(`  Running: ${runner.bin} run -i <prompt> --no-session`);
+  }
 
   const output = execSync(cmd, {
     cwd: workdir,
@@ -204,28 +218,31 @@ async function runOpenCodeAgent(
   model: ModelConfig,
   runner: RunnerConfig,
   prompt: string,
-  workdir: string
+  workdir: string,
+  resume: boolean = false
 ): Promise<string> {
   // Write opencode.json config to workdir
   const openCodeConfig = generateOpenCodeConfig(model, runner, workdir);
   writeFileSync(join(workdir, "opencode.json"), JSON.stringify(openCodeConfig, null, 2));
 
-  // Write prompt to file
+  // Write prompt to file (use cat to avoid shell escaping issues)
   const promptFile = join(workdir, ".opencode-prompt.txt");
   writeFileSync(promptFile, prompt);
 
   // Ensure isolated config directory exists
   mkdirSync(OPENCODE_ROOT, { recursive: true });
 
-  const cmd = `${runner.bin} run "$(cat "${promptFile}")"`;
-  console.log(`  Running: ${runner.bin} run "<prompt>"`);
+  // Use --continue on turn 2+ to continue last session
+  const continueFlag = resume ? "--continue " : "";
+  const cmd = `${runner.bin} run ${continueFlag}"$(cat "${promptFile}")"`;
+  console.log(`  Running: ${runner.bin} run ${continueFlag}"<prompt>"`);
 
   const output = execSync(cmd, {
     cwd: workdir,
     env: {
       ...process.env,
-      XDG_CONFIG_HOME: OPENCODE_ROOT,  // Isolate opencode config
-      XDG_DATA_HOME: OPENCODE_ROOT,    // Isolate opencode data
+      XDG_CONFIG_HOME: OPENCODE_ROOT,
+      XDG_DATA_HOME: OPENCODE_ROOT,
     },
     timeout: 5 * 60 * 1000,
     encoding: "utf-8",
@@ -239,16 +256,25 @@ async function runOpenCodeAgent(
 // Unified Runner
 // =============================================================================
 
+interface AgentResult {
+  output: string;
+  sessionId?: string;  // For goose multi-turn
+}
+
 async function runAgent(
   model: ModelConfig,
   runner: RunnerConfig,
   prompt: string,
-  workdir: string
-): Promise<string> {
+  workdir: string,
+  sessionId?: string,  // For multi-turn (goose only)
+  resume: boolean = false  // For multi-turn: true on turn 2+
+): Promise<AgentResult> {
   if (runner.type === "opencode") {
-    return runOpenCodeAgent(model, runner, prompt, workdir);
+    const output = await runOpenCodeAgent(model, runner, prompt, workdir, resume);
+    return { output };
   }
-  return runGooseAgent(model, runner, prompt, workdir);
+  const output = await runGooseAgent(model, runner, prompt, workdir, sessionId, resume);
+  return { output, sessionId };
 }
 
 // =============================================================================
@@ -387,23 +413,64 @@ async function runScenario(
     status: "running",
   };
 
-  let output = "";
-  try {
-    output = await runAgent(model, runner, scenario.prompt, workdir);
-    run.endTime = new Date();
+  // Determine if this is a multi-turn or single-turn scenario
+  const turns = scenario.turns ?? [
+    { prompt: scenario.prompt!, validate: scenario.validate ?? [] }
+  ];
+  const isMultiTurn = turns.length > 1;
 
-    const validations = validateAll(scenario.validate, workdir);
-    const allPassed = validations.every((v) => v.result.passed);
+  // For goose: generate session ID upfront
+  // For opencode: capture session ID from first turn's output
+  let sessionId: string | undefined = isMultiTurn && runner.type === "goose"
+    ? `test_${testId}_${Date.now()}`
+    : undefined;
+
+  let output = "";
+  const allValidations: Array<{ rule: any; passed: boolean; message?: string }> = [];
+
+  try {
+    for (let turnIndex = 0; turnIndex < turns.length; turnIndex++) {
+      const turn = turns[turnIndex];
+      const turnLabel = isMultiTurn ? ` [turn ${turnIndex + 1}/${turns.length}]` : "";
+      console.log(`  Running${turnLabel}...`);
+
+      // Run the agent (with session for multi-turn)
+      const resume = turnIndex > 0;  // Resume session on turn 2+
+      const result = await runAgent(model, runner, turn.prompt, workdir, sessionId, resume);
+      
+      // Capture session ID from first turn (for opencode)
+      if (turnIndex === 0 && result.sessionId) {
+        sessionId = result.sessionId;
+      }
+      
+      output += `\n${'='.repeat(60)}\nTURN ${turnIndex + 1}\n${'='.repeat(60)}\n${result.output}`;
+
+      // Validate this turn
+      const turnValidations = validateAll(turn.validate, workdir);
+      for (const v of turnValidations) {
+        allValidations.push({
+          rule: v.rule,
+          passed: v.result.passed,
+          message: v.result.message,
+        });
+      }
+
+      // If any validation failed, stop early
+      const turnPassed = turnValidations.every((v) => v.result.passed);
+      if (!turnPassed) {
+        console.log(`  Turn ${turnIndex + 1} failed validation`);
+        break;
+      }
+    }
+
+    run.endTime = new Date();
+    const allPassed = allValidations.every((v) => v.passed);
 
     writeFileSync(logFile, output);
 
     return {
       run: { ...run, status: allPassed ? "passed" : "failed" },
-      validations: validations.map((v) => ({
-        rule: v.rule,
-        passed: v.result.passed,
-        message: v.result.message,
-      })),
+      validations: allValidations,
       logFile,
       runnerName: runner.name,
     };
@@ -418,7 +485,7 @@ async function runScenario(
         endTime: new Date(),
         errors: [String(err)],
       },
-      validations: [],
+      validations: allValidations,
       logFile,
       runnerName: runner.name,
     };
@@ -465,6 +532,12 @@ function generateHtmlReport(
     rowsByKey.set(pairKey(pair), { model: pair.model, runner: pair.runner });
   }
 
+  // Build set of valid (scenario, rowKey) combinations from the matrix
+  const validCells = new Set<string>();
+  for (const pair of allPairs) {
+    validCells.add(`${pair.scenario.name}::${pairKey(pair)}`);
+  }
+
   const getResult = (scenario: string, rowKey: string) => {
     const [modelPart, runnerName] = rowKey.split("::");
     return results.find(
@@ -506,6 +579,7 @@ function generateHtmlReport(
     .status.passed { background: #238636; }
     .status.failed { background: #da3633; }
     .status.pending { background: #6e7681; }
+    .status.na { background: transparent; border: 1px dashed #30363d; color: #484f58; }
     .status.running { background: #9e6a03; animation: pulse 1.5s infinite; }
     @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.5; } }
     .duration { color: #8b949e; font-size: 0.85rem; }
@@ -558,7 +632,13 @@ function generateHtmlReport(
           </div></td>
           ${scenarios.map((scenario) => {
             const r = getResult(scenario, key);
-            if (!r) return `<td><div class="cell"><span class="status pending">-</span></div></td>`;
+            if (!r) {
+              // Check if this combination is in the matrix
+              const cellKey = `${scenario}::${key}`;
+              const isInMatrix = validCells.has(cellKey);
+              if (!isInMatrix) return `<td><div class="cell"><span class="status na">—</span></div></td>`;
+              return `<td><div class="cell"><span class="status pending">⋯</span></div></td>`;
+            }
             if (r.run.status === "running") {
               return `<td><div class="cell"><span class="status running">...</span></div></td>`;
             }
@@ -661,7 +741,7 @@ async function main() {
 
   // CLI --run-count=N (default 3)
   const runCountArg = process.argv.find((a) => a.startsWith("--run-count="))?.split("=")[1];
-  const RUN_COUNT = runCountArg ? parseInt(runCountArg, 10) : 3;
+  const RUN_COUNT = runCountArg ? parseInt(runCountArg, 10) : 1;
 
   console.log(`Models: ${config.models.map((m) => m.name).join(", ")}`);
   console.log(`Runners: ${config.runners.map((r) => r.name).join(", ")}`);

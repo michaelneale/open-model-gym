@@ -10,6 +10,26 @@ models:
     provider: ollama
     model: glm-4.7-flash:latest
 
+  - name: kimi-k2.5
+    provider: ollama
+    model: kimi-k2.5:cloud
+
+  - name: gpt-oss-120b
+    provider: ollama
+    model: gpt-oss:120b-cloud
+
+  - name: gpt-oss-20b
+    provider: ollama
+    model: gpt-oss:20b
+
+  - name: qwen3-coder-64k
+    provider: ollama
+    model: qwen3-coder:64k
+
+  - name: nemotron-3-nano
+    provider: ollama
+    model: nemotron-3-nano:latest
+
 # =============================================================================
 # Runners - agent frameworks with their specific configurations
 # =============================================================================
@@ -42,10 +62,12 @@ runners:
 # - Omit 'models' to run against ALL models
 # - Omit 'runners' to run against ALL runners
 matrix:
-  #- scenario: everyday-app-automation
-  #  models: [glm-4.7-flash]
-  #  runners: [goose-full, opencode]
+  # everyday-app-automation runs against all models and all runners
+  - scenario: everyday-app-automation
 
+  # file-editing runs against all models and all runners
   - scenario: file-editing
-    models: [opus]
-    runners: [goose-full, opencode]
+
+  # multi-turn-edit only runs on goose (only goose supports multi-turn)
+  - scenario: multi-turn-edit
+    runners: [goose-full]

@@ -14,19 +14,30 @@ export interface AgentConfig {
 export interface Scenario {
   name: string;
   description: string;
-  prompt: string;
+  prompt?: string;
   /** Files to create before running (relative paths) */
   setup?: Record<string, string>;
-  /** Validation rules to check after agent completes */
-  validate: ValidationRule[];
+  /** Validation rules to check after agent completes (single-turn) */
+  validate?: ValidationRule[];
+  /** Multi-turn conversation (alternative to single prompt+validate) */
+  turns?: Turn[];
   /** Tags for filtering scenarios */
   tags?: string[];
+}
+
+/** A single turn in a multi-turn conversation */
+export interface Turn {
+  /** The prompt for this turn */
+  prompt: string;
+  /** Validation rules to check after this turn completes */
+  validate: ValidationRule[];
 }
 
 export type ValidationRule =
   | { type: "file_exists"; path: string; name?: string }
   | { type: "file_contains"; path: string; pattern: string; name?: string }
   | { type: "file_matches"; path: string; regex: string; name?: string }
+  | { type: "file_not_matches"; path: string; regex: string; name?: string }
   | { type: "file_not_empty"; path: string; name?: string }
   | { type: "command_succeeds"; command: string; name?: string }
   | { type: "tool_called"; tool: string; args?: Record<string, string | RegExp>; name?: string }

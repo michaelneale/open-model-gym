@@ -65,6 +65,22 @@ export function validateRule(
       };
     }
 
+    case "file_not_matches": {
+      const fullPath = join(workdir, rule.path);
+      if (!existsSync(fullPath)) {
+        return { passed: false, message: `File not found: ${rule.path}` };
+      }
+      const content = readFileSync(fullPath, "utf-8");
+      const regex = new RegExp(rule.regex);
+      const matches = regex.test(content);
+      return {
+        passed: !matches,
+        message: !matches
+          ? undefined
+          : `File ${rule.path} should not match regex: ${rule.regex}`,
+      };
+    }
+
     case "command_succeeds": {
       try {
         execSync(rule.command, { cwd: workdir, stdio: "pipe" });
