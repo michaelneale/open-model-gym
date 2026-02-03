@@ -2,52 +2,55 @@
 # Runner Configuration
 # =============================================================================
 # runner: goose                    # Runner type (currently only "goose" supported)
-# goose-bin: /path/to/goose        # Default goose binary (agents can override)
-#                                  # Examples:
-#                                  #   goose-bin: goose              (use PATH)
-#                                  #   goose-bin: ./target/release/goose
-#                                  #   goose-bin: /usr/local/bin/goose-dev
+# goose-bin: /path/to/goose        # Default goose binary (used if goose-bins not specified)
+#
+# goose-bins:                      # Binaries to test - each agent runs against ALL binaries
+#   - name: release
+#     path: /Users/micn/Documents/code/goose/target/release/goose
+#   - name: default
+#     path: goose
+
+runner: goose
+goose-bins:
+  - name: release
+    path: /Users/micn/Documents/code/goose/target/release/goose
+  - name: default
+    path: goose
 
 # =============================================================================
 # Agent Configurations
 # =============================================================================
-# Each agent can override goose-bin:
-#   - name: my-agent
-#     provider: anthropic
-#     model: claude-opus-4-5-20251101
-#     goose-bin: ./my-custom-goose   # Takes precedence over config-level default
-
-runner: goose
-goose-bin: /Users/micn/Documents/code/goose/target/release/goose
-
 agent-config:
-  - name: opus-baseline
-    provider: anthropic
-    model: claude-opus-4-5-20251101
-    extensions: [developer, todo, skills, code_execution, extensionmanager]
+  # --- Anthropic models (commented out for now) ---
+  # - name: opus-baseline
+  #   provider: anthropic
+  #   model: claude-opus-4-5-20251101
+  #   extensions: [developer, todo, skills, code_execution, extensionmanager]
 
-  - name: opus-full
-    provider: anthropic
-    model: claude-opus-4-5-20251101
-    extensions: [developer, todo, skills, code_execution, extensionmanager]
-    stdio:
-      - node mcp-harness/dist/index.js
+  # - name: opus-full
+  #   provider: anthropic
+  #   model: claude-opus-4-5-20251101
+  #   extensions: [developer, todo, skills, code_execution, extensionmanager]
+  #   stdio:
+  #     - node mcp-harness/dist/index.js
 
-  - name: nemotron-full
-    provider: ollama
-    model: nemotron-3-nano:latest
-    extensions: [developer, todo, skills, code_execution, extensionmanager]
-    stdio:
-      - node mcp-harness/dist/index.js
+  # --- Ollama models (commented out) ---
+  # - name: nemotron-full
+  #   provider: ollama
+  #   model: nemotron-3-nano:latest
+  #   extensions: [developer, todo, skills, code_execution, extensionmanager]
+  #   stdio:
+  #     - node mcp-harness/dist/index.js
 
-  - name: kimi-k2.5:cloud
+  # --- ACTIVE: Models to test ---
+  - name: kimi-k2.5-full
     provider: ollama
     model: kimi-k2.5:cloud
     extensions: [developer, todo, skills, code_execution, extensionmanager]
     stdio:
       - node mcp-harness/dist/index.js
 
-  - name: gpt-oss:120b-cloud
+  - name: gpt-oss-120b-full
     provider: ollama
     model: gpt-oss:120b-cloud
     extensions: [developer, todo, skills, code_execution, extensionmanager]
@@ -68,47 +71,51 @@ agent-config:
     stdio:
       - node mcp-harness/dist/index.js
 
-  - name: qwen3-coder-64k-lean-code-mode
-    provider: ollama
-    model: qwen3-coder:64k
-    extensions: [developer, code_execution]
+  # --- More Ollama models (commented out) ---
+  # - name: qwen3-coder-64k-lean-code-mode
+  #   provider: ollama
+  #   model: qwen3-coder:64k
+  #   extensions: [developer, code_execution]
 
-  - name: qwen3-coder-64k-lean
-    provider: ollama
-    model: qwen3-coder:64k
-    extensions: [developer]
+  # - name: qwen3-coder-64k-lean
+  #   provider: ollama
+  #   model: qwen3-coder:64k
+  #   extensions: [developer]
 
-  - name: glm-4.7-flash-full
-    provider: ollama
-    model: glm-4.7-flash:latest
-    extensions: [developer, todo, skills, code_execution, extensionmanager]
-    stdio:
-      - node mcp-harness/dist/index.js
+  # - name: glm-4.7-flash-full
+  #   provider: ollama
+  #   model: glm-4.7-flash:latest
+  #   extensions: [developer, todo, skills, code_execution, extensionmanager]
+  #   stdio:
+  #     - node mcp-harness/dist/index.js
 
-  - name: glm-4.7-flash-lean
-    provider: ollama
-    model: glm-4.7-flash:latest
-    extensions: [developer]
+  # - name: glm-4.7-flash-lean
+  #   provider: ollama
+  #   model: glm-4.7-flash:latest
+  #   extensions: [developer]
 
-  - name: glm-4.7-flash-lean-code-mode
-    provider: ollama
-    model: glm-4.7-flash:latest
-    extensions: [developer, code_execution]
+  # - name: glm-4.7-flash-lean-code-mode
+  #   provider: ollama
+  #   model: glm-4.7-flash:latest
+  #   extensions: [developer, code_execution]
 
-# Test matrix: which scenarios run with which agents
+# =============================================================================
+# Test Matrix
+# =============================================================================
+# Which scenarios run with which agents
+# - Omit 'agents' to run against ALL active agents
+# - Specify 'agents' list to restrict to specific agents
+
 matrix:
-  # simple-file-create runs against ALL agents
+  # simple-file-create runs against ALL active agents
   - scenario: simple-file-create
 
-  # everyday-app-automation only runs against agents with stdio (mcp-harness)
+  # everyday-app-automation runs against agents with stdio (mcp-harness)
   - scenario: everyday-app-automation
     agents:
       [
-        opus-full,
-        nemotron-full,
-        kimi-k2.5:cloud,
-        gpt-oss:120b-cloud,
+        kimi-k2.5-full,
+        gpt-oss-120b-full,
         gpt-oss-20b-full,
         qwen3-coder-64k-full,
-        glm-4.7-flash-full,
       ]

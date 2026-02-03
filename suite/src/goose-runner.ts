@@ -125,9 +125,23 @@ async function runAgent(
 
 interface TestResultWithLog extends TestResult {
   logFile: string;
+  binName: string;  // which binary was used for this run
 }
 
 type NamedAgentConfig = AgentConfig & { name: string };
+
+// Binary configuration for permutation
+interface GooseBinConfig {
+  name: string;
+  path: string;
+}
+
+// A test pair includes scenario, agent, and which binary to use
+interface TestPair {
+  scenario: Scenario;
+  agent: NamedAgentConfig;
+  bin: GooseBinConfig;
+}
 
 // Score a result: higher is better (more validations passed, passed status)
 function scoreResult(result: TestResultWithLog): number {
@@ -145,9 +159,9 @@ async function runScenario(
   baseWorkdir: string,
   logsDir: string,
   attempt: number = 1,
-  defaultGooseBin?: string
+  bin: GooseBinConfig
 ): Promise<TestResultWithLog> {
-  const testId = `${scenario.name}_${config.provider}_${config.model}`.replace(/[\/\\:]/g, "_");
+  const testId = `${scenario.name}_${config.provider}_${config.model}_${bin.name}`.replace(/[\/\\:]/g, "_");
   const workdir = join(baseWorkdir, testId);
   const logFile = join(logsDir, `${testId}_attempt${attempt}.log`);
 
@@ -166,7 +180,7 @@ async function runScenario(
 
   let output = "";
   try {
-    output = await runAgent(config, scenario.prompt, workdir, defaultGooseBin);
+    output = await runAgent(config, scenario.prompt, workdir, bin.path);
     run.endTime = new Date();
 
     const validations = validateAll(scenario.validate, workdir);
@@ -182,6 +196,7 @@ async function runScenario(
         message: v.result.message,
       })),
       logFile,
+      binName: bin.name,
     };
   } catch (err) {
     const errorOutput = output + "\n\nERROR:\n" + String(err);
@@ -196,6 +211,7 @@ async function runScenario(
       },
       validations: [],
       logFile,
+      binName: bin.name,
     };
   }
 }
@@ -242,11 +258,22 @@ function agentConfigKey(config: AgentConfig): string {
   });
 }
 
+// Key that includes binary for unique row identification
+function pairKey(config: AgentConfig, binName: string): string {
+  return JSON.stringify({
+    provider: config.provider,
+    model: config.model,
+    extensions: config.extensions ?? [],
+    stdio: config.stdio ?? [],
+    bin: binName,
+  });
+}
+
 interface ReportOptions {
   isRunning?: boolean;
-  allPairs?: Array<{ scenario: Scenario; agent: NamedAgentConfig }>;
+  allPairs?: TestPair[];
   runner?: string;
-  defaultGooseBin?: string;  // config-level default (agents may override)
+  bins?: GooseBinConfig[];  // binaries being tested
 }
 
 function generateHtmlReport(
@@ -254,26 +281,28 @@ function generateHtmlReport(
   outputPath: string,
   options: ReportOptions = {}
 ): void {
-  const { isRunning = false, allPairs = [], runner = "goose", defaultGooseBin = "goose" } = options;
+  const { isRunning = false, allPairs = [], runner = "goose", bins = [] } = options;
 
-  // Get all scenarios and configs from pairs (if provided) or results
+  // Get all scenarios
   const scenarios = allPairs.length
     ? [...new Set(allPairs.map((p) => p.scenario.name))]
     : [...new Set(results.map((r) => r.run.scenario.name))];
 
-  const configKeys = allPairs.length
-    ? [...new Set(allPairs.map((p) => agentConfigKey(p.agent)))]
-    : [...new Set(results.map((r) => agentConfigKey(r.run.config)))];
+  // Rows are (agent + binary) combinations
+  const rowKeys = allPairs.length
+    ? [...new Set(allPairs.map((p) => pairKey(p.agent, p.bin.name)))]
+    : [...new Set(results.map((r) => pairKey(r.run.config, r.binName)))];
 
-  const configsByKey = allPairs.length
-    ? new Map(allPairs.map((p) => [agentConfigKey(p.agent), p.agent]))
-    : new Map(results.map((r) => [agentConfigKey(r.run.config), r.run.config]));
+  // Map row key -> { agent config, bin name }
+  const rowsByKey = allPairs.length
+    ? new Map(allPairs.map((p) => [pairKey(p.agent, p.bin.name), { agent: p.agent, binName: p.bin.name }]))
+    : new Map(results.map((r) => [pairKey(r.run.config, r.binName), { agent: r.run.config as NamedAgentConfig, binName: r.binName }]));
 
-  const getResult = (scenario: string, configKey: string) =>
+  const getResult = (scenario: string, rowKey: string) =>
     results.find(
       (r) =>
         r.run.scenario.name === scenario &&
-        agentConfigKey(r.run.config) === configKey
+        pairKey(r.run.config, r.binName) === rowKey
     );
 
   const passed = results.filter((r) => r.run.status === "passed").length;
@@ -331,21 +360,23 @@ function generateHtmlReport(
     <span class="failed">${failed} failed</span>${pending > 0 ? ` / <span style="color:#9e6a03">${pending} pending</span>` : ""} / 
     ${total} total
   </p>
-  <p class="runner-info">Runner: ${runner} | Default binary: <code>${defaultGooseBin}</code></p>
+  <p class="runner-info">Runner: ${runner} | Binaries: ${bins.map(b => `<code>${b.name}</code>`).join(", ")}</p>
   
   <table>
     <thead>
       <tr>
         <th>Agent</th>
+        <th>Binary</th>
         ${scenarios.map((scenario) => `<th>${scenario}</th>`).join("")}
       </tr>
     </thead>
     <tbody>
-      ${configKeys.map((key) => {
-        const cfg = configsByKey.get(key)!;
+      ${rowKeys.map((key) => {
+        const row = rowsByKey.get(key)!;
+        const cfg = row.agent;
         const allExts = [
           ...(cfg.extensions ?? []),
-          ...(cfg.stdio ?? []).map((e) => basename(e.split(" ").pop() || e).replace(/\.[^.]+$/, "")),
+          ...(cfg.stdio ?? []).map((e: string) => basename(e.split(" ").pop() || e).replace(/\.[^.]+$/, "")),
         ];
         return `
         <tr>
@@ -354,6 +385,7 @@ function generateHtmlReport(
             <span class="provider">${cfg.provider}</span>
             ${allExts.length ? `<span class="extensions">[${allExts.join(", ")}]</span>` : ""}
           </div></td>
+          <td><code>${row.binName}</code></td>
           ${scenarios.map((scenario) => {
             const r = getResult(scenario, key) as TestResultWithLog | undefined;
             if (!r) return `<td><div class="cell"><span class="status pending">-</span></div></td>`;
@@ -404,8 +436,10 @@ interface SuiteConfig {
   matrix?: MatrixEntry[];
   /** Runner type (currently only "goose" supported) */
   runner?: "goose";
-  /** Default goose binary path (agents can override) */
+  /** Default goose binary path (used if goose-bins not specified) */
   "goose-bin"?: string;
+  /** Binaries to test - each agent runs against ALL binaries listed */
+  "goose-bins"?: GooseBinConfig[];
 }
 
 function loadConfig(configPath: string): SuiteConfig {
@@ -437,12 +471,18 @@ function loadConfig(configPath: string): SuiteConfig {
 function buildTestPairs(
   config: SuiteConfig,
   scenarios: Scenario[]
-): Array<{ scenario: Scenario; agent: NamedAgentConfig }> {
+): TestPair[] {
   const agentsByName = new Map(config["agent-config"].map((a) => [a.name, a]));
+  
+  // Get binaries to test - either from goose-bins array or single goose-bin/default
+  const bins: GooseBinConfig[] = config["goose-bins"]?.length 
+    ? config["goose-bins"]
+    : [{ name: "default", path: config["goose-bin"] || "goose" }];
+
+  const pairs: TestPair[] = [];
 
   if (config.matrix?.length) {
     // Use explicit matrix
-    const pairs: Array<{ scenario: Scenario; agent: NamedAgentConfig }> = [];
     for (const entry of config.matrix) {
       const scenario = scenarios.find((s) => s.name === entry.scenario);
       if (!scenario) continue;
@@ -450,17 +490,20 @@ function buildTestPairs(
         ? entry.agents.map((n) => agentsByName.get(n)).filter(Boolean) as NamedAgentConfig[]
         : config["agent-config"];  // omit agents = all
       for (const agent of agents) {
-        pairs.push({ scenario, agent });
+        for (const bin of bins) {
+          pairs.push({ scenario, agent, bin });
+        }
       }
     }
     return pairs;
   }
 
-  // No matrix: all scenarios x all agents
-  const pairs: Array<{ scenario: Scenario; agent: NamedAgentConfig }> = [];
+  // No matrix: all scenarios x all agents x all binaries
   for (const scenario of scenarios) {
     for (const agent of config["agent-config"]) {
-      pairs.push({ scenario, agent });
+      for (const bin of bins) {
+        pairs.push({ scenario, agent, bin });
+      }
     }
   }
   return pairs;
@@ -498,13 +541,17 @@ async function main() {
   const RUN_COUNT = runCountArg ? parseInt(runCountArg, 10) : 3;
 
   const runner = config.runner || "goose";
-  const defaultBin = config["goose-bin"] || runner;
-  console.log(`Runner: ${runner} (bin: ${defaultBin})`);
+  const bins: GooseBinConfig[] = config["goose-bins"]?.length 
+    ? config["goose-bins"]
+    : [{ name: "default", path: config["goose-bin"] || "goose" }];
+  
+  console.log(`Runner: ${runner}`);
+  console.log(`Binaries: ${bins.map(b => b.name).join(", ")}`);
   console.log(`Running ${pairs.length} test pairs (${RUN_COUNT}x each, worst result kept)`);
 
   // Generate initial report with all pending and open browser
   const results: TestResultWithLog[] = [];
-  generateHtmlReport(results, reportPath, { isRunning: true, allPairs: pairs, runner, defaultGooseBin: defaultBin });
+  generateHtmlReport(results, reportPath, { isRunning: true, allPairs: pairs, runner, bins });
   
   // CLI --no-open to skip opening browser (useful for chained runs)
   const noOpen = process.argv.includes("--no-open");
@@ -512,12 +559,12 @@ async function main() {
     execSync(`open "${reportPath}"`);
   }
 
-  for (const { scenario, agent } of pairs) {
+  for (const { scenario, agent, bin } of pairs) {
     let worstResult: TestResultWithLog | null = null;
 
     for (let attempt = 1; attempt <= RUN_COUNT; attempt++) {
-      console.log(`  Attempt ${attempt}/${RUN_COUNT}`);
-      const result = await runScenario(scenario, agent, workdir, logsDir, attempt, config["goose-bin"]);
+      console.log(`  Attempt ${attempt}/${RUN_COUNT} [bin: ${bin.name}]`);
+      const result = await runScenario(scenario, agent, workdir, logsDir, attempt, bin);
 
       // Keep the worst result (failed > passed, or fewer validations passed)
       if (!worstResult) {
@@ -538,11 +585,11 @@ async function main() {
 
     results.push(worstResult!);
     // Update report after each test pair completes
-    generateHtmlReport(results, reportPath, { isRunning: true, allPairs: pairs, runner, defaultGooseBin: defaultBin });
+    generateHtmlReport(results, reportPath, { isRunning: true, allPairs: pairs, runner, bins });
   }
 
   // Final report without auto-refresh
-  generateHtmlReport(results, reportPath, { isRunning: false, allPairs: pairs, runner, defaultGooseBin: defaultBin });
+  generateHtmlReport(results, reportPath, { isRunning: false, allPairs: pairs, runner, bins });
   printResults(results);
 }
 
