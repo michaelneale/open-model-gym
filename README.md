@@ -1,6 +1,8 @@
 # Open Model Gym
 
-Run agent tests across a matrix of **models × runners × scenarios** with repeated runs to catch flaky passes.
+Run agent tests across a matrix of **models × runners × scenarios**. 
+
+It isn't hard for anhy agent to do ok with opus, but lets scale things in the other direction. What do we have to break things down to.
 
 ## Latest Results
 
