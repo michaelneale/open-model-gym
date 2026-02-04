@@ -870,7 +870,7 @@ function generateHtmlReport(
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  ${isRunning ? '<meta http-equiv="refresh" content="3">' : ""}
+  
   <title>${isRunning ? "Running..." : "Results"} - Agent Gym Workout</title>
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -933,7 +933,7 @@ function generateHtmlReport(
     .modal-body pre { margin: 0; white-space: pre-wrap; word-wrap: break-word; font-family: monospace; font-size: 0.85rem; color: #c9d1d9; }
   </style>
 </head>
-<body>
+<body data-running="${isRunning}">
   <div class="header"><img src="${gymBase64 ? `data:image/png;base64,${gymBase64}` : 'gym.png'}" alt="Agent Gym"><h1>Agent Gym Workout${isRunning ? " (Running...)" : ""}</h1>${!isRunning ? '<button class="download-btn" onclick="downloadReport()">📥 Download Full Report</button>' : ''}</div>
   <p class="summary">
     <span class="passed">${passed} passed</span> / 
@@ -1059,6 +1059,74 @@ function generateHtmlReport(
       a.click();
       URL.revokeObjectURL(url);
     }
+
+    // Smart refresh - fetch new page and swap body content
+    ${isRunning ? `
+    (function() {
+      const REFRESH_INTERVAL = 2000;
+      
+      async function smartRefresh() {
+        // Don't refresh if modal is open
+        if (document.getElementById('logModal').classList.contains('open')) {
+          setTimeout(smartRefresh, REFRESH_INTERVAL);
+          return;
+        }
+        
+        try {
+          const response = await fetch(location.href + '?t=' + Date.now(), { cache: 'no-store' });
+          const html = await response.text();
+          
+          // Parse the new HTML
+          const parser = new DOMParser();
+          const newDoc = parser.parseFromString(html, 'text/html');
+          
+          // Check if still running via data attribute
+          const stillRunning = newDoc.body.dataset.running === 'true';
+          
+          // Replace entire body content but preserve scroll position
+          const scrollY = window.scrollY;
+          document.body.innerHTML = newDoc.body.innerHTML;
+          document.body.dataset.running = newDoc.body.dataset.running;
+          document.title = newDoc.title;
+          window.scrollTo(0, scrollY);
+          
+          // Re-extract LOGS from the new script
+          const newScript = newDoc.querySelector('script');
+          if (newScript) {
+            const scriptText = newScript.textContent;
+            const startMarker = 'const LOGS = ';
+            const startIdx = scriptText.indexOf(startMarker);
+            if (startIdx !== -1) {
+              const jsonStart = startIdx + startMarker.length;
+              let depth = 0;
+              let jsonEnd = jsonStart;
+              for (let i = jsonStart; i < scriptText.length; i++) {
+                if (scriptText[i] === '{') depth++;
+                else if (scriptText[i] === '}') {
+                  depth--;
+                  if (depth === 0) {
+                    jsonEnd = i + 1;
+                    break;
+                  }
+                }
+              }
+              try {
+                window.LOGS = JSON.parse(scriptText.slice(jsonStart, jsonEnd));
+              } catch (e) {}
+            }
+          }
+          
+          if (stillRunning) {
+            setTimeout(smartRefresh, REFRESH_INTERVAL);
+          }
+        } catch (e) {
+          setTimeout(smartRefresh, REFRESH_INTERVAL * 2);
+        }
+      }
+      
+      setTimeout(smartRefresh, REFRESH_INTERVAL);
+    })();
+    ` : ''}
   </script>
 </body>
 </html>`;
@@ -1169,16 +1237,13 @@ async function main() {
   console.log(`Cache: ${noCache ? "disabled" : "enabled"} (${Object.keys(cache.entries).length} entries)`);
 
   const results: TestResultWithLog[] = [];
-  generateHtmlReport(results, reportPath, { isRunning: true, allPairs: pairs });
-
+  
   // CLI --no-open to skip opening browser
   const noOpen = process.argv.includes("--no-open");
-  if (!noOpen) {
-    execSync(`open "${reportPath}"`);
-  }
 
   let cacheHits = 0;
   let cacheMisses = 0;
+  let browserOpened = false;
 
   for (const pair of pairs) {
     // Check cache first
@@ -1189,10 +1254,18 @@ async function main() {
       if (cachedResult) {
         console.log(`\n${cachedResult.run.status === "passed" ? "✓" : "✗"} ${pair.scenario.name} [${pair.model.name}] (${pair.runner.name}) [CACHED]`);
         results.push(cachedResult);
-        generateHtmlReport(results, reportPath, { isRunning: true, allPairs: pairs });
         cacheHits++;
         continue;
       }
+    }
+
+    // First cache miss - generate report with cached results so far and open browser
+    if (!browserOpened) {
+      generateHtmlReport(results, reportPath, { isRunning: true, allPairs: pairs });
+      if (!noOpen) {
+        execSync(`open "${reportPath}"`);
+      }
+      browserOpened = true;
     }
 
     cacheMisses++;
@@ -1225,6 +1298,12 @@ async function main() {
   }
 
   generateHtmlReport(results, reportPath, { isRunning: false, allPairs: pairs });
+  
+  // If everything was cached, open browser now with final report
+  if (!browserOpened && !noOpen) {
+    execSync(`open "${reportPath}"`);
+  }
+  
   printResults(results);
 
   console.log(`\nCache summary: ${cacheHits} hits, ${cacheMisses} misses`);
