@@ -89,9 +89,14 @@ matrix:
   - scenario: everyday-app-automation
     runners: [goose-full]
 
-  # file-editing runs against all models and all runners
-  #- scenario: file-editing
-  #  runners: [goose-lean-dev, goose-lean-code-mode]
+  # opencode runs everyday-app-automation for all models
+  - scenario: everyday-app-automation
+    runners: [opencode]
+
+  # file-editing runs on opencode for half the models
+  - scenario: file-editing
+    runners: [opencode]
+    models: [opus, glm-4.7-flash, kimi-k2.5]
 
   # multi-turn-edit only runs on goose (only goose supports multi-turn)
   - scenario: multi-turn-edit
