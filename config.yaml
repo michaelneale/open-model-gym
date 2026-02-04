@@ -55,26 +55,17 @@ runners:
     stdio:
       - node mcp-harness/dist/index.js
 
-  - name: goose-lean-dev
-    type: goose
-    bin: goose
-    extensions: [developer]
-
-  - name: goose-lean-code-mode
-    type: goose
-    bin: goose
-    extensions: [developer, code_execution]
-
-  - name: goose-lean-full
-    type: goose
-    bin: goose
-    extensions: [developer]
-    stdio:
-      - node mcp-harness/dist/index.js
-
   - name: opencode
     type: opencode
     bin: opencode
+    stdio:
+      - node mcp-harness/dist/index.js
+
+  - name: pi
+    type: pi
+    bin: pi
+    # Pi takes provider/model from the test matrix, not config
+    # MCP support via pi-mcp-adapter: `pi install npm:pi-mcp-adapter`
     stdio:
       - node mcp-harness/dist/index.js
 
@@ -85,19 +76,10 @@ runners:
 # - Omit 'models' to run against ALL models
 # - Omit 'runners' to run against ALL runners
 matrix:
-  # everyday-app-automation runs against all models and all runners
+  # Single-turn scenarios: all models × all runners
   - scenario: everyday-app-automation
-    runners: [goose-full]
-
-  # opencode runs everyday-app-automation for all models
-  - scenario: everyday-app-automation
-    runners: [opencode]
-
-  # file-editing runs on opencode for half the models
   - scenario: file-editing
-    runners: [opencode]
-    models: [opus, glm-4.7-flash, kimi-k2.5]
 
-  # multi-turn-edit only runs on goose (only goose supports multi-turn)
+  # Multi-turn: goose and pi only (opencode doesn't support session continuation)
   - scenario: multi-turn-edit
-    runners: [goose-full]
+    runners: [goose-full, pi]

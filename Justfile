@@ -27,6 +27,8 @@ report:
 install:
     cd suite && npm install
     cd mcp-harness && npm install && npm run build
+    @# Install pi-mcp-adapter for Pi runner MCP support
+    @pi list 2>/dev/null | grep -q "pi-mcp-adapter" || pi install npm:pi-mcp-adapter
 
 # Build TypeScript
 build: _install
@@ -54,3 +56,5 @@ _install:
     @[ -d suite/node_modules ] || (cd suite && npm install)
     @[ -d mcp-harness/node_modules ] || (cd mcp-harness && npm install)
     @cd mcp-harness && npm run build
+    @# Ensure pi-mcp-adapter is installed for Pi runner
+    @pi list 2>/dev/null | grep -q "pi-mcp-adapter" || pi install npm:pi-mcp-adapter

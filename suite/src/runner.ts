@@ -12,7 +12,7 @@ import { validateAll } from "./validator.js";
 // Types
 // =============================================================================
 
-type RunnerType = "goose" | "opencode";
+type RunnerType = "goose" | "opencode" | "pi";
 
 interface ModelConfig {
   name: string;
@@ -486,13 +486,114 @@ async function runOpenCodeAgent(
   return output;
 }
 
+
+// =============================================================================
+// Pi Runner
+// =============================================================================
+
+// Pi takes --provider and --model as CLI arguments
+// MCP support via pi-mcp-adapter: `pi install npm:pi-mcp-adapter`
+
+async function runPiAgent(
+  model: ModelConfig,
+  runner: RunnerConfig,
+  prompt: string,
+  workdir: string,
+  sessionName?: string,  // If provided, use/continue this session (for multi-turn)
+  resume: boolean = false  // If true, continue existing session (for turn 2+)
+): Promise<string> {
+  // Write prompt to file (use cat to avoid shell escaping issues)
+  const promptFile = join(workdir, ".pi-prompt.txt");
+  writeFileSync(promptFile, prompt);
+
+  // Build base command with provider/model
+  // -p = non-interactive (print mode)
+  let cmd = `${runner.bin} -p --provider ${model.provider} --model "${model.model}"`;
+  let hasMcp = false;
+
+  // Session handling for multi-turn
+  if (sessionName) {
+    const sessionPath = join(workdir, `.pi-session-${sessionName}.jsonl`);
+    if (resume) {
+      // Turn 2+: continue the existing session
+      cmd += ` --continue --session "${sessionPath}"`;
+    } else {
+      // Turn 1: create a new session file
+      cmd += ` --session "${sessionPath}"`;
+    }
+  } else {
+    // Single-turn: don't save session
+    cmd += ` --no-session`;
+  }
+
+  // If runner has stdio MCP servers, create a config and pass it via --mcp-config
+  // Requires pi-mcp-adapter to be installed: `pi install npm:pi-mcp-adapter`
+  if (runner.stdio?.length) {
+    const mcpConfig: {
+      mcpServers: Record<string, {
+        command: string;
+        args: string[];
+        lifecycle: string;
+        env: Record<string, string>;
+      }>;
+      settings: { directTools: boolean };
+    } = {
+      mcpServers: {},
+      settings: { directTools: true }  // Register MCP tools directly in Pi's tool list
+    };
+
+    // Add each stdio server from runner config
+    runner.stdio.forEach((extCmd, i) => {
+      const parts = extCmd.split(" ");
+      const serverName = `harness${i > 0 ? i : ''}`;
+      mcpConfig.mcpServers[serverName] = {
+        command: parts[0],
+        args: parts.slice(1),
+        lifecycle: "eager",  // Connect at startup for tests
+        env: {
+          MCP_HARNESS_LOG: join(workdir, "tool-calls.log")
+        }
+      };
+    });
+
+    // Write config to workdir
+    const mcpConfigPath = join(workdir, ".pi-mcp.json");
+    writeFileSync(mcpConfigPath, JSON.stringify(mcpConfig, null, 2));
+
+    // Add the --mcp-config flag
+    cmd += ` --mcp-config "${mcpConfigPath}"`;
+    hasMcp = true;
+  }
+
+  cmd += ` "$(cat "${promptFile}")"`;
+
+  // Build log message
+  const sessionInfo = sessionName 
+    ? (resume ? ` --continue --session <session>` : ` --session <session>`)
+    : ` --no-session`;
+  console.log(`  Running: ${runner.bin} -p${sessionInfo} --provider ${model.provider} --model "${model.model}"${hasMcp ? ' --mcp-config <config>' : ''} "<prompt>"`);
+
+  const output = execSync(cmd, {
+    cwd: workdir,
+    env: {
+      ...process.env,
+      MCP_HARNESS_LOG: join(workdir, "tool-calls.log"),
+    },
+    timeout: 5 * 60 * 1000,
+    encoding: "utf-8",
+    shell: "/bin/bash",
+  });
+
+  return output;
+}
+
 // =============================================================================
 // Unified Runner
 // =============================================================================
 
 interface AgentResult {
   output: string;
-  sessionId?: string;  // For goose multi-turn
+  sessionId?: string;  // For multi-turn (goose, pi)
 }
 
 async function runAgent(
@@ -500,12 +601,16 @@ async function runAgent(
   runner: RunnerConfig,
   prompt: string,
   workdir: string,
-  sessionId?: string,  // For multi-turn (goose only)
+  sessionId?: string,  // For multi-turn (goose, pi)
   resume: boolean = false  // For multi-turn: true on turn 2+
 ): Promise<AgentResult> {
   if (runner.type === "opencode") {
     const output = await runOpenCodeAgent(model, runner, prompt, workdir, resume);
     return { output };
+  }
+  if (runner.type === "pi") {
+    const output = await runPiAgent(model, runner, prompt, workdir, sessionId, resume);
+    return { output, sessionId };
   }
   const output = await runGooseAgent(model, runner, prompt, workdir, sessionId, resume);
   return { output, sessionId };
@@ -685,9 +790,9 @@ async function runScenario(
   ];
   const isMultiTurn = turns.length > 1;
 
-  // For goose: generate session ID upfront
+  // For goose/pi: generate session ID upfront
   // For opencode: capture session ID from first turn's output
-  let sessionId: string | undefined = isMultiTurn && runner.type === "goose"
+  let sessionId: string | undefined = isMultiTurn && (runner.type === "goose" || runner.type === "pi")
     ? `test_${testId}_${Date.now()}`
     : undefined;
 

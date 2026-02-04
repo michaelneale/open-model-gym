@@ -72,6 +72,104 @@ runners:
 **Supported runner types:**
 - `goose` — [Goose](https://github.com/block/goose) agent framework
 - `opencode` — [OpenCode](https://opencode.ai) agent framework
+- `pi` — [Pi](https://github.com/badlogic/pi-mono) coding agent
+
+## Runner Details
+
+Each runner has different setup requirements, MCP integration methods, and session handling.
+
+### Goose
+
+[Goose](https://github.com/block/goose) is Block's open-source coding agent with built-in MCP support.
+
+**Setup:** Install via `brew install goose` or from source.
+
+**MCP Integration:** Native support. The harness writes a `config.yaml` to an isolated `.goose-root/` directory with extensions and MCP servers:
+
+```yaml
+extensions:
+  developer:
+    enabled: true
+  mcp_harness:
+    type: stdio
+    enabled: true
+    cmd: node
+    args: [mcp-harness/dist/index.js]
+```
+
+**Session Handling:** Uses `--name <session>` for named sessions, `--resume` to continue:
+- Turn 1: `goose run -i <prompt> --name <session>`
+- Turn 2+: `goose run -i <prompt> --name <session> --resume`
+- Single-turn: `goose run -i <prompt> --no-session`
+
+### OpenCode
+
+[OpenCode](https://opencode.ai) is a terminal-based coding agent.
+
+**Setup:** Install via their website or package manager.
+
+**MCP Integration:** Native support. The harness writes an `opencode.json` config to the workdir:
+
+```json
+{
+  "mcp": {
+    "harness": {
+      "type": "local",
+      "command": ["node", "mcp-harness/dist/index.js"],
+      "enabled": true
+    }
+  },
+  "model": "anthropic/claude-opus-4-5-20251101"
+}
+```
+
+**Session Handling:** Uses `--continue` to resume the last session in the working directory:
+- Turn 1: `opencode run "<prompt>"`
+- Turn 2+: `opencode run --continue "<prompt>"`
+
+⚠️ OpenCode doesn't support named sessions, so multi-turn scenarios exclude it.
+
+### Pi
+
+[Pi](https://github.com/badlogic/pi-mono) is a lightweight coding agent that requires an adapter for MCP support.
+
+**Setup:**
+```bash
+# Install Pi
+npm install -g @anthropic/pi   # or from source
+
+# Install the MCP adapter (required for MCP tools)
+pi install npm:pi-mcp-adapter
+```
+
+The `just install` recipe auto-installs pi-mcp-adapter if missing.
+
+**MCP Integration:** Via [pi-mcp-adapter](https://github.com/nicobailon/pi-mcp-adapter). The harness dynamically writes a `.pi-mcp.json` config to the workdir:
+
+```json
+{
+  "mcpServers": {
+    "harness": {
+      "command": "node",
+      "args": ["mcp-harness/dist/index.js"],
+      "lifecycle": "eager",
+      "env": { "MCP_HARNESS_LOG": "<workdir>/tool-calls.log" }
+    }
+  },
+  "settings": { "directTools": true }
+}
+```
+
+Key settings:
+- `directTools: true` — Registers MCP tools directly in Pi's tool list (no wrapper)
+- `lifecycle: "eager"` — Connects to MCP servers at startup
+
+**Session Handling:** Uses `--session <path>` for file-based sessions, `--continue` to resume:
+- Turn 1: `pi -p --session <path> "<prompt>"`
+- Turn 2+: `pi -p --continue --session <path> "<prompt>"`
+- Single-turn: `pi -p --no-session "<prompt>"`
+
+The `-p` flag runs Pi in non-interactive "print" mode for automation
 
 ### Matrix
 
