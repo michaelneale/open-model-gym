@@ -1,9 +1,10 @@
 #!/usr/bin/env node
-import { mkdirSync, writeFileSync, rmSync, readdirSync } from "node:fs";
-import { join, basename } from "node:path";
+import { mkdirSync, writeFileSync, rmSync, readdirSync, existsSync, copyFileSync } from "node:fs";
+import { join, basename, dirname } from "node:path";
 import { execSync } from "node:child_process";
 import { parse, stringify } from "yaml";
 import { readFileSync } from "node:fs";
+import { createHash } from "node:crypto";
 import type { Scenario, TestResult, TestRun, Turn } from "./types.js";
 import { validateAll } from "./validator.js";
 
@@ -51,6 +52,237 @@ interface TestResultWithLog extends TestResult {
   runnerName: string;
   toolCalls: number;
   turns: number;
+  cached?: boolean;
+}
+
+// =============================================================================
+// Cache Types
+// =============================================================================
+
+interface CacheInputs {
+  scenarioHash: string;
+  modelKey: string;
+  runnerHash: string;
+  binaryHash: string;
+  mcpHarnessHash: string;
+}
+
+interface CacheEntry {
+  timestamp: string;
+  inputs: CacheInputs;
+  result: {
+    status: "passed" | "failed";
+    validations: Array<{ rule: any; passed: boolean; message?: string }>;
+    duration: number;
+    toolCalls: number;
+    turns: number;
+    errors?: string[];
+  };
+  logFile: string;
+}
+
+interface CacheIndex {
+  version: number;
+  entries: Record<string, CacheEntry>;
+}
+
+// =============================================================================
+// Cache Utilities
+// =============================================================================
+
+const CACHE_DIR = join(import.meta.dirname, "../.cache");
+const CACHE_INDEX_PATH = join(CACHE_DIR, "index.json");
+const CACHE_LOGS_DIR = join(CACHE_DIR, "logs");
+const CACHE_VERSION = 1;
+
+function sha256(data: string | Buffer): string {
+  return createHash("sha256").update(data).digest("hex").slice(0, 16);
+}
+
+function loadCache(): CacheIndex {
+  try {
+    if (existsSync(CACHE_INDEX_PATH)) {
+      const data = JSON.parse(readFileSync(CACHE_INDEX_PATH, "utf-8"));
+      if (data.version === CACHE_VERSION) {
+        return data;
+      }
+      console.log("Cache version mismatch, starting fresh");
+    }
+  } catch (e) {
+    console.log("Cache corrupted, starting fresh");
+  }
+  return { version: CACHE_VERSION, entries: {} };
+}
+
+function saveCache(cache: CacheIndex): void {
+  mkdirSync(CACHE_DIR, { recursive: true });
+  writeFileSync(CACHE_INDEX_PATH, JSON.stringify(cache, null, 2));
+}
+
+function getBinaryHash(binName: string): string {
+  try {
+    const binaryPath = execSync(`which ${binName}`, { encoding: "utf-8" }).trim();
+    const binaryContent = readFileSync(binaryPath);
+    return sha256(binaryContent);
+  } catch (e) {
+    // Fallback to version string if we can't read the binary
+    try {
+      const version = execSync(`${binName} --version 2>/dev/null || echo "unknown"`, { encoding: "utf-8" }).trim();
+      return sha256(version);
+    } catch {
+      return "unknown";
+    }
+  }
+}
+
+function getMcpHarnessHash(): string {
+  const mcpHarnessPath = join(import.meta.dirname, "../../mcp-harness/dist/index.js");
+  try {
+    if (existsSync(mcpHarnessPath)) {
+      return sha256(readFileSync(mcpHarnessPath));
+    }
+  } catch (e) {
+    // Ignore
+  }
+  return "no-mcp-harness";
+}
+
+function computeCacheKey(pair: TestPair, binaryHashes: Map<string, string>, mcpHarnessHash: string): { key: string; inputs: CacheInputs } {
+  // Hash scenario content (name + prompt/turns + setup + validate)
+  const scenarioContent = stringify({
+    name: pair.scenario.name,
+    prompt: pair.scenario.prompt,
+    turns: pair.scenario.turns,
+    setup: pair.scenario.setup,
+    validate: pair.scenario.validate,
+  });
+  const scenarioHash = sha256(scenarioContent);
+
+  // Model key
+  const modelKey = `${pair.model.provider}/${pair.model.model}`;
+
+  // Hash runner config
+  const runnerContent = JSON.stringify({
+    name: pair.runner.name,
+    type: pair.runner.type,
+    extensions: pair.runner.extensions ?? [],
+    stdio: pair.runner.stdio ?? [],
+  });
+  const runnerHash = sha256(runnerContent);
+
+  // Binary hash (cached per binary name)
+  const binaryHash = binaryHashes.get(pair.runner.bin) ?? "unknown";
+
+  const inputs: CacheInputs = {
+    scenarioHash,
+    modelKey,
+    runnerHash,
+    binaryHash,
+    mcpHarnessHash,
+  };
+
+  // Combine all into single key
+  const key = sha256(scenarioHash + modelKey + runnerHash + binaryHash + mcpHarnessHash);
+
+  return { key, inputs };
+}
+
+function getCachedResult(
+  cache: CacheIndex,
+  cacheKey: string,
+  pair: TestPair,
+  logsDir: string
+): TestResultWithLog | null {
+  const entry = cache.entries[cacheKey];
+  if (!entry) return null;
+
+  // Verify the cached log file exists
+  const cachedLogPath = join(CACHE_LOGS_DIR, entry.logFile);
+  if (!existsSync(cachedLogPath)) {
+    console.log(`  Cache log missing, will re-run`);
+    delete cache.entries[cacheKey];
+    return null;
+  }
+
+  // Copy cached log to current logs directory
+  const testId = `${pair.scenario.name}_${pair.model.name}_${pair.runner.name}`.replace(/[\/\\:]/g, "_");
+  const logFile = join(logsDir, `${testId}_cached.log`);
+  mkdirSync(logsDir, { recursive: true });
+  copyFileSync(cachedLogPath, logFile);
+
+  // Reconstruct result
+  const config = {
+    provider: pair.model.provider,
+    model: pair.model.model,
+    extensions: pair.runner.extensions,
+    stdio: pair.runner.stdio,
+  };
+
+  const run: TestRun = {
+    scenario: pair.scenario,
+    config,
+    workdir: "", // Not relevant for cached results
+    startTime: new Date(entry.timestamp),
+    endTime: new Date(new Date(entry.timestamp).getTime() + entry.result.duration),
+    status: entry.result.status,
+    errors: entry.result.errors,
+  };
+
+  return {
+    run,
+    validations: entry.result.validations,
+    logFile,
+    runnerName: pair.runner.name,
+    toolCalls: entry.result.toolCalls,
+    turns: entry.result.turns,
+    cached: true,
+  };
+}
+
+function storeCacheResult(
+  cache: CacheIndex,
+  cacheKey: string,
+  inputs: CacheInputs,
+  result: TestResultWithLog
+): void {
+  // Copy log to cache directory
+  const logFileName = `${cacheKey}.log`;
+  const cachedLogPath = join(CACHE_LOGS_DIR, logFileName);
+  mkdirSync(CACHE_LOGS_DIR, { recursive: true });
+  
+  try {
+    copyFileSync(result.logFile, cachedLogPath);
+  } catch (e) {
+    console.log(`  Warning: Could not cache log file`);
+    return;
+  }
+
+  cache.entries[cacheKey] = {
+    timestamp: new Date().toISOString(),
+    inputs,
+    result: {
+      status: result.run.status as "passed" | "failed",
+      validations: result.validations,
+      duration: result.run.endTime && result.run.startTime
+        ? result.run.endTime.getTime() - result.run.startTime.getTime()
+        : 0,
+      toolCalls: result.toolCalls,
+      turns: result.turns,
+      errors: result.run.errors,
+    },
+    logFile: logFileName,
+  };
+
+  saveCache(cache);
+}
+
+function clearCache(): void {
+  if (existsSync(CACHE_DIR)) {
+    rmSync(CACHE_DIR, { recursive: true, force: true });
+    console.log("Cache cleared");
+  } else {
+    console.log("No cache to clear");
+  }
 }
 
 // =============================================================================
@@ -660,6 +892,7 @@ function generateHtmlReport(
     .status.na { background: transparent; border: 1px dashed #30363d; color: #484f58; }
     .status.running { background: #9e6a03; animation: pulse 1.5s infinite; }
     @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.5; } }
+    .cached-badge { background: #388bfd33; color: #58a6ff; font-size: 0.65rem; padding: 0.1rem 0.3rem; border-radius: 3px; margin-left: 0.25rem; }
     .duration { color: #8b949e; font-size: 0.85rem; }
     .log-link { color: #58a6ff; font-size: 0.75rem; text-decoration: none; }
     .log-link:hover { text-decoration: underline; }
@@ -763,6 +996,7 @@ function generateHtmlReport(
               return `<td>
                 <div class="cell">
                   <span class="status ${r.run.status}">${r.run.status === "passed" ? "✓" : "✗"}</span>
+                  ${r.cached ? '<span class="cached-badge">cached</span>' : ''}
                   <span class="duration">${duration}s</span>
                   ${logPath ? `<a class="log-link" href="${logPath}" onclick="event.preventDefault();showLog('${basename(r.logFile!)}')">log</a>` : ""}
                 </div>
@@ -861,6 +1095,12 @@ function printResults(results: TestResultWithLog[]): void {
 // =============================================================================
 
 async function main() {
+  // CLI --clear-cache: clear cache and exit
+  if (process.argv.includes("--clear-cache")) {
+    clearCache();
+    return;
+  }
+
   const rootDir = join(import.meta.dirname, "../..");
   const configPath = join(rootDir, "config.yaml");
   const scenariosDir = join(import.meta.dirname, "../scenarios");
@@ -905,13 +1145,28 @@ async function main() {
     console.log(`  ${m}: ${count} tests`);
   }
 
-  // CLI --run-count=N (default 3)
+  // CLI --run-count=N (default 1)
   const runCountArg = process.argv.find((a) => a.startsWith("--run-count="))?.split("=")[1];
   const RUN_COUNT = runCountArg ? parseInt(runCountArg, 10) : 1;
+
+  // CLI --no-cache: skip cache lookup (still stores results)
+  const noCache = process.argv.includes("--no-cache");
+
+  // Load cache and precompute hashes
+  const cache = loadCache();
+  const binaryHashes = new Map<string, string>();
+  for (const runner of config.runners) {
+    if (!binaryHashes.has(runner.bin)) {
+      console.log(`Computing hash for ${runner.bin}...`);
+      binaryHashes.set(runner.bin, getBinaryHash(runner.bin));
+    }
+  }
+  const mcpHarnessHash = getMcpHarnessHash();
 
   console.log(`Models: ${config.models.map((m) => m.name).join(", ")}`);
   console.log(`Runners: ${config.runners.map((r) => r.name).join(", ")}`);
   console.log(`Running ${pairs.length} test pairs (${RUN_COUNT}x each, worst result kept)`);
+  console.log(`Cache: ${noCache ? "disabled" : "enabled"} (${Object.keys(cache.entries).length} entries)`);
 
   const results: TestResultWithLog[] = [];
   generateHtmlReport(results, reportPath, { isRunning: true, allPairs: pairs });
@@ -922,7 +1177,25 @@ async function main() {
     execSync(`open "${reportPath}"`);
   }
 
+  let cacheHits = 0;
+  let cacheMisses = 0;
+
   for (const pair of pairs) {
+    // Check cache first
+    const { key: cacheKey, inputs: cacheInputs } = computeCacheKey(pair, binaryHashes, mcpHarnessHash);
+    
+    if (!noCache) {
+      const cachedResult = getCachedResult(cache, cacheKey, pair, logsDir);
+      if (cachedResult) {
+        console.log(`\n${cachedResult.run.status === "passed" ? "✓" : "✗"} ${pair.scenario.name} [${pair.model.name}] (${pair.runner.name}) [CACHED]`);
+        results.push(cachedResult);
+        generateHtmlReport(results, reportPath, { isRunning: true, allPairs: pairs });
+        cacheHits++;
+        continue;
+      }
+    }
+
+    cacheMisses++;
     let worstResult: TestResultWithLog | null = null;
 
     for (let attempt = 1; attempt <= RUN_COUNT; attempt++) {
@@ -944,12 +1217,17 @@ async function main() {
       }
     }
 
+    // Store in cache
+    storeCacheResult(cache, cacheKey, cacheInputs, worstResult!);
+
     results.push(worstResult!);
     generateHtmlReport(results, reportPath, { isRunning: true, allPairs: pairs });
   }
 
   generateHtmlReport(results, reportPath, { isRunning: false, allPairs: pairs });
   printResults(results);
+
+  console.log(`\nCache summary: ${cacheHits} hits, ${cacheMisses} misses`);
 }
 
 main().catch(console.error);

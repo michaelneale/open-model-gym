@@ -32,6 +32,23 @@ install:
 build: _install
     cd suite && npm run build
 
+# Clear the test cache
+clear-cache:
+    cd suite && npx tsx src/runner.ts --clear-cache
+
+# Run tests ignoring cache (force fresh runs)
+run-fresh: _install
+    cd suite && npx tsx src/runner.ts --no-cache
+
+# Show cache stats
+cache-stats:
+    @if [ -f suite/.cache/index.json ]; then \
+        echo "Cache entries: $$(cat suite/.cache/index.json | grep -o '"[a-f0-9]\{16\}":' | wc -l | tr -d ' ')"; \
+        echo "Cache size: $$(du -sh suite/.cache 2>/dev/null | cut -f1 || echo '0')"; \
+    else \
+        echo "No cache found"; \
+    fi
+
 # Internal: install if node_modules missing, always rebuild mcp-harness
 _install:
     @[ -d suite/node_modules ] || (cd suite && npm install)

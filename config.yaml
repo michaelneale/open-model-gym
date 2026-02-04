@@ -10,6 +10,11 @@ models:
     provider: ollama
     model: glm-4.7-flash:latest
 
+  # too slow on 64g:
+  #- name: frob/qwen3-coder-next:latest
+  #  provider: ollama
+  #  model: frob/qwen3-coder-next:latest
+
   - name: kimi-k2.5
     provider: ollama
     model: kimi-k2.5:cloud
@@ -22,13 +27,14 @@ models:
     provider: ollama
     model: gpt-oss:20b
 
-  - name: qwen3-coder-64k
+  - name: qwen3-coder:latest
     provider: ollama
-    model: qwen3-coder:64k
+    model: qwen3-coder:latest
 
-  - name: nemotron-3-nano
-    provider: ollama
-    model: nemotron-3-nano:latest
+  # good but too slow on 64G
+  #- name: nemotron-3-nano
+  #  provider: ollama
+  #  model: nemotron-3-nano:latest
 
 # =============================================================================
 # Runners - agent frameworks with their specific configurations
@@ -59,14 +65,12 @@ runners:
     bin: goose
     extensions: [developer, code_execution]
 
-
   - name: goose-lean-full
     type: goose
     bin: goose
     extensions: [developer]
     stdio:
       - node mcp-harness/dist/index.js
-
 
   - name: opencode
     type: opencode
@@ -83,12 +87,12 @@ runners:
 matrix:
   # everyday-app-automation runs against all models and all runners
   - scenario: everyday-app-automation
-    runners: [goose-lean-full, goose-full]
+    runners: [goose-full]
 
   # file-editing runs against all models and all runners
   #- scenario: file-editing
   #  runners: [goose-lean-dev, goose-lean-code-mode]
 
   # multi-turn-edit only runs on goose (only goose supports multi-turn)
-  #- scenario: multi-turn-edit
- #   runners: [goose-lean-dev, goose-lean-code-mode]
+  - scenario: multi-turn-edit
+    runners: [goose-full]
