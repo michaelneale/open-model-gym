@@ -12,6 +12,7 @@ out/
 .nuxt/
 .output/
 .opencode-root
+suite/.pi-root
 
 # TypeScript
 *.tsbuildinfo

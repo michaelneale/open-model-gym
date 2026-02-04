@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import { mkdirSync, writeFileSync, rmSync, readdirSync, existsSync, copyFileSync } from "node:fs";
 import { join, basename, dirname } from "node:path";
+import { homedir } from "node:os";
 import { execSync } from "node:child_process";
 import { parse, stringify } from "yaml";
 import { readFileSync } from "node:fs";
@@ -494,6 +495,48 @@ async function runOpenCodeAgent(
 // Pi takes --provider and --model as CLI arguments
 // MCP support via pi-mcp-adapter: `pi install npm:pi-mcp-adapter`
 
+// Isolated Pi config directory (like Goose/OpenCode)
+const PI_CONFIG_DIR = join(import.meta.dirname, "../.pi-root");
+
+// User's real Pi config (for copying auth.json)
+const PI_USER_CONFIG = join(homedir(), ".pi", "agent");
+
+/**
+ * Generate models.json for Pi with the test model.
+ * For ollama models, we need to define them since Pi doesn't have built-in ollama support.
+ */
+function generatePiModelsConfig(model: ModelConfig): object {
+  // Only generate config for ollama provider (others are built-in)
+  if (model.provider !== "ollama") {
+    return { providers: {} };
+  }
+
+  return {
+    providers: {
+      ollama: {
+        baseUrl: "http://localhost:11434/v1",
+        api: "openai-completions",
+        apiKey: "ollama",  // Ollama doesn't need a real key
+        models: [
+          {
+            id: model.model,
+            name: model.name,
+            reasoning: false,
+            input: ["text"],
+            contextWindow: 128000,
+            maxTokens: 32768,
+            compat: {
+              supportsUsageInStreaming: false,
+              maxTokensField: "max_tokens",
+              supportsDeveloperRole: false
+            }
+          }
+        ]
+      }
+    }
+  };
+}
+
 async function runPiAgent(
   model: ModelConfig,
   runner: RunnerConfig,
@@ -505,6 +548,19 @@ async function runPiAgent(
   // Write prompt to file (use cat to avoid shell escaping issues)
   const promptFile = join(workdir, ".pi-prompt.txt");
   writeFileSync(promptFile, prompt);
+
+  // Set up isolated Pi config directory
+  mkdirSync(PI_CONFIG_DIR, { recursive: true });
+
+  // Generate models.json with the test model (for ollama)
+  const modelsConfig = generatePiModelsConfig(model);
+  writeFileSync(join(PI_CONFIG_DIR, "models.json"), JSON.stringify(modelsConfig, null, 2));
+
+  // Copy auth.json from user's config (for API keys)
+  const userAuthPath = join(PI_USER_CONFIG, "auth.json");
+  if (existsSync(userAuthPath)) {
+    copyFileSync(userAuthPath, join(PI_CONFIG_DIR, "auth.json"));
+  }
 
   // Build base command with provider/model
   // -p = non-interactive (print mode)
@@ -577,6 +633,7 @@ async function runPiAgent(
     cwd: workdir,
     env: {
       ...process.env,
+      PI_CODING_AGENT_DIR: PI_CONFIG_DIR,  // Use isolated config dir
       MCP_HARNESS_LOG: join(workdir, "tool-calls.log"),
     },
     timeout: 5 * 60 * 1000,

@@ -164,6 +164,23 @@ Key settings:
 - `directTools: true` — Registers MCP tools directly in Pi's tool list (no wrapper)
 - `lifecycle: "eager"` — Connects to MCP servers at startup
 
+**Model Configuration:** Pi requires custom models (like Ollama) to be defined in `models.json`. The harness automatically generates this config in an isolated `.pi-root/` directory and sets `PI_CODING_AGENT_DIR` to use it:
+
+```json
+{
+  "providers": {
+    "ollama": {
+      "baseUrl": "http://localhost:11434/v1",
+      "api": "openai-completions",
+      "apiKey": "ollama",
+      "models": [{ "id": "model-name", "name": "Model Name", ... }]
+    }
+  }
+}
+```
+
+The harness copies `auth.json` from your real Pi config (`~/.pi/agent/`) so API keys work.
+
 **Session Handling:** Uses `--session <path>` for file-based sessions, `--continue` to resume:
 - Turn 1: `pi -p --session <path> "<prompt>"`
 - Turn 2+: `pi -p --continue --session <path> "<prompt>"`
