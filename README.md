@@ -2,13 +2,9 @@
 
 Run agent tests across a matrix of **models × runners × scenarios**. 
 
-It isn't hard for anhy agent to do ok with opus, but lets scale things in the other direction. What do we have to break things down to.
+It isn't hard for any agent to do ok with opus, but lets scale things in the other direction. What do we have to break things down to.
 
-## Latest Results
-
-📊 **[View Latest Report](agent-gym-report-2026-02-03.html)** — Download and open locally to see full results with embedded logs.
-
-> The report is a self-contained HTML file with all test results, validation details, and complete agent logs embedded.
+<img width="1768" height="1133" alt="image" src="https://github.com/user-attachments/assets/29915659-ee6b-4a8b-ba5e-58420b168b43" />
 
 ## Quick Start
 
