@@ -562,6 +562,12 @@ async function runPiAgent(
     copyFileSync(userAuthPath, join(PI_CONFIG_DIR, "auth.json"));
   }
 
+  // Copy settings.json from user's config (for installed packages like pi-mcp-adapter)
+  const userSettingsPath = join(PI_USER_CONFIG, "settings.json");
+  if (existsSync(userSettingsPath)) {
+    copyFileSync(userSettingsPath, join(PI_CONFIG_DIR, "settings.json"));
+  }
+
   // Build base command with provider/model
   // -p = non-interactive (print mode)
   let cmd = `${runner.bin} -p --provider ${model.provider} --model "${model.model}"`;
