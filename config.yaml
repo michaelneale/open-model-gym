@@ -78,10 +78,8 @@ runners:
 matrix:
   # Single-turn scenarios: all models × all runners
   - scenario: everyday-app-automation
-    runners: [pi]
   - scenario: file-editing
-    runners: [pi]
 
   # Multi-turn: goose and pi only (opencode doesn't support session continuation)
   - scenario: multi-turn-edit
-    runners: [pi]
+    runners: [pi, goose-full, opencode]
