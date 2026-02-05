@@ -80,7 +80,7 @@ matrix:
   - scenario: everyday-app-automation
     runners: [pi]
   - scenario: file-editing
-    runners: [p1]
+    runners: [pi]
 
   # Multi-turn: goose and pi only (opencode doesn't support session continuation)
   - scenario: multi-turn-edit

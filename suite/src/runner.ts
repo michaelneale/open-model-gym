@@ -579,13 +579,14 @@ async function runPiAgent(
         lifecycle: string;
         env: Record<string, string>;
       }>;
-      settings: { directTools: boolean; toolPrefix: string };
+      settings: { toolPrefix: string };
     } = {
       mcpServers: {},
       settings: {
-        directTools: true,   // Register MCP tools directly in Pi's tool list
-        toolPrefix: "none"   // No prefix - use raw tool names like Goose/OpenCode
+        toolPrefix: "none"   // No prefix - use raw tool names
       }
+      // Proxy mode: LLM uses mcp({ search: "..." }) to discover tools on-demand
+      // This scales better with many MCP tools vs directTools which burns context
     };
 
     // Add each stdio server from runner config
@@ -771,13 +772,35 @@ function parseLogMetrics(logContent: string, workdir?: string): { toolCalls: num
 function buildTestPairs(config: SuiteConfig, scenarios: Scenario[]): TestPair[] {
   const modelsByName = new Map(config.models.map((m) => [m.name, m]));
   const runnersByName = new Map(config.runners.map((r) => [r.name, r]));
+  const scenariosByName = new Map(scenarios.map((s) => [s.name, s]));
 
   const pairs: TestPair[] = [];
 
   if (config.matrix?.length) {
     for (const entry of config.matrix) {
-      const scenario = scenarios.find((s) => s.name === entry.scenario);
-      if (!scenario) continue;
+      // Validate scenario name
+      const scenario = scenariosByName.get(entry.scenario);
+      if (!scenario) {
+        throw new Error(`Unknown scenario "${entry.scenario}" in matrix. Available: ${[...scenariosByName.keys()].join(", ")}`);
+      }
+
+      // Validate model names
+      if (entry.models) {
+        for (const name of entry.models) {
+          if (!modelsByName.has(name)) {
+            throw new Error(`Unknown model "${name}" in matrix entry for scenario "${entry.scenario}". Available: ${[...modelsByName.keys()].join(", ")}`);
+          }
+        }
+      }
+
+      // Validate runner names
+      if (entry.runners) {
+        for (const name of entry.runners) {
+          if (!runnersByName.has(name)) {
+            throw new Error(`Unknown runner "${name}" in matrix entry for scenario "${entry.scenario}". Available: ${[...runnersByName.keys()].join(", ")}`);
+          }
+        }
+      }
 
       const models = entry.models
         ? entry.models.map((n) => modelsByName.get(n)).filter(Boolean) as ModelConfig[]
