@@ -568,28 +568,9 @@ async function runPiAgent(
     copyFileSync(userSettingsPath, join(PI_CONFIG_DIR, "settings.json"));
   }
 
-  // Build base command with provider/model
-  // -p = non-interactive (print mode)
-  let cmd = `${runner.bin} -p --provider ${model.provider} --model "${model.model}"`;
+  // If runner has stdio MCP servers, write .pi/mcp.json to the workdir (project config)
+  // pi-mcp-adapter checks for .pi/mcp.json in cwd, which overrides global config
   let hasMcp = false;
-
-  // Session handling for multi-turn
-  if (sessionName) {
-    const sessionPath = join(workdir, `.pi-session-${sessionName}.jsonl`);
-    if (resume) {
-      // Turn 2+: continue the existing session
-      cmd += ` --continue --session "${sessionPath}"`;
-    } else {
-      // Turn 1: create a new session file
-      cmd += ` --session "${sessionPath}"`;
-    }
-  } else {
-    // Single-turn: don't save session
-    cmd += ` --no-session`;
-  }
-
-  // If runner has stdio MCP servers, create a config and pass it via --mcp-config
-  // Requires pi-mcp-adapter to be installed: `pi install npm:pi-mcp-adapter`
   if (runner.stdio?.length) {
     const mcpConfig: {
       mcpServers: Record<string, {
@@ -598,10 +579,13 @@ async function runPiAgent(
         lifecycle: string;
         env: Record<string, string>;
       }>;
-      settings: { directTools: boolean };
+      settings: { directTools: boolean; toolPrefix: string };
     } = {
       mcpServers: {},
-      settings: { directTools: true }  // Register MCP tools directly in Pi's tool list
+      settings: {
+        directTools: true,   // Register MCP tools directly in Pi's tool list
+        toolPrefix: "none"   // No prefix - use raw tool names like Goose/OpenCode
+      }
     };
 
     // Add each stdio server from runner config
@@ -618,13 +602,30 @@ async function runPiAgent(
       };
     });
 
-    // Write config to workdir
-    const mcpConfigPath = join(workdir, ".pi-mcp.json");
-    writeFileSync(mcpConfigPath, JSON.stringify(mcpConfig, null, 2));
-
-    // Add the --mcp-config flag
-    cmd += ` --mcp-config "${mcpConfigPath}"`;
+    // Write .pi/mcp.json to workdir (project-local config that pi-mcp-adapter finds)
+    const piConfigDir = join(workdir, ".pi");
+    mkdirSync(piConfigDir, { recursive: true });
+    writeFileSync(join(piConfigDir, "mcp.json"), JSON.stringify(mcpConfig, null, 2));
     hasMcp = true;
+  }
+
+  // Build base command with provider/model
+  // -p = non-interactive (print mode)
+  let cmd = `${runner.bin} -p --provider ${model.provider} --model "${model.model}"`;
+
+  // Session handling for multi-turn
+  if (sessionName) {
+    const sessionPath = join(workdir, `.pi-session-${sessionName}.jsonl`);
+    if (resume) {
+      // Turn 2+: continue the existing session
+      cmd += ` --continue --session "${sessionPath}"`;
+    } else {
+      // Turn 1: create a new session file
+      cmd += ` --session "${sessionPath}"`;
+    }
+  } else {
+    // Single-turn: don't save session
+    cmd += ` --no-session`;
   }
 
   cmd += ` "$(cat "${promptFile}")"`;
@@ -633,7 +634,7 @@ async function runPiAgent(
   const sessionInfo = sessionName 
     ? (resume ? ` --continue --session <session>` : ` --session <session>`)
     : ` --no-session`;
-  console.log(`  Running: ${runner.bin} -p${sessionInfo} --provider ${model.provider} --model "${model.model}"${hasMcp ? ' --mcp-config <config>' : ''} "<prompt>"`);
+  console.log(`  Running: ${runner.bin} -p${sessionInfo} --provider ${model.provider} --model "${model.model}"${hasMcp ? ' (mcp)' : ''} "<prompt>"`);
 
   const output = execSync(cmd, {
     cwd: workdir,
