@@ -82,4 +82,4 @@ matrix:
 
   # Multi-turn: goose and pi only (opencode doesn't support session continuation)
   - scenario: multi-turn-edit
-    runners: [pi, goose-full, opencode]
+    runners: [pi, goose-full]
