@@ -55,6 +55,13 @@ runners:
     stdio:
       - node mcp-harness/dist/index.js
 
+  - name: goose-lean
+    type: goose-diet
+    bin: goose
+    extensions: [developer]
+    stdio:
+      - node mcp-harness/dist/index.js
+
   - name: opencode
     type: opencode
     bin: opencode
@@ -76,10 +83,16 @@ runners:
 # - Omit 'models' to run against ALL models
 # - Omit 'runners' to run against ALL runners
 matrix:
-  # Single-turn scenarios: all models × all runners
-  - scenario: everyday-app-automation
-  - scenario: file-editing
+  # Wet test: opus only across all scenarios/runners
+  #- scenario: everyday-app-automation
+  #  models: [opus]
+  #- scenario: file-editing
+  #  models: [opus]
+  - scenario: remove-tool-from-app
+    models: [glm-4.7-flash]
+    runners: [pi, opencode, goose-lean, goose-full]
 
   # Multi-turn: goose and pi only (opencode doesn't support session continuation)
-  - scenario: multi-turn-edit
-    runners: [pi, goose-full]
+  #- scenario: multi-turn-edit
+  #  models: [opus]
+  #  runners: [pi, goose-full]

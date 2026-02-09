@@ -23,6 +23,8 @@ export interface Scenario {
   turns?: Turn[];
   /** Tags for filtering scenarios */
   tags?: string[];
+  /** Timeout in ms for agent execution (default: 5 min) */
+  timeout?: number;
 }
 
 /** A single turn in a multi-turn conversation */

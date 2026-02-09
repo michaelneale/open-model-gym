@@ -1,0 +1,1588 @@
+name: remove-tool-from-app
+timeout: 600000  # 10 minutes - large codebase refactoring task
+description: Remove a tool/operation from a Python app - edit source code, update types, fix tests
+prompt: |
+  This is a Python document-editing tool app. The `insert_media` operation is being
+  deprecated. Please remove it completely:
+
+  1. Remove the `insert_media` entry from the `DOCUMENT_OPERATIONS` Literal type
+  2. Remove the `MediaParams` dataclass
+  3. Remove the `media_params` parameter from the `document_tool` function signature
+  4. Remove the `insert_media` validation check and its entry from `operation_handlers`
+  5. Remove the `insert_media` async function
+  6. Remove any references to `insert_media` or `MediaParams` from the docstring
+  7. Update `tests/test_documents.py` to remove all tests and imports related to `insert_media` and `MediaParams`
+
+  Make sure the remaining code still works - don't break any of the other operations.
+
+tags:
+  - file-editing
+  - refactoring
+  - python
+
+setup:
+  pyproject.toml: |
+    [build-system]
+    requires = ["hatchling"]
+    build-backend = "hatchling.build"
+
+    [project]
+    name = "example-app"
+    version = "0.1.0"
+    description = "Document editor application"
+    readme = "README.md"
+    requires-python = ">=3.10"
+    dependencies = [
+        "pydantic>=2.0.0",
+        "pytest>=7.0.0",
+        "pytest-asyncio>=0.21.0",
+    ]
+
+    [project.optional-dependencies]
+    dev = [
+        "ruff>=0.1.0",
+        "pytest>=7.0.0",
+        "pytest-asyncio>=0.21.0",
+    ]
+
+    [tool.hatch.build.targets.wheel]
+    packages = ["src/example_app"]
+
+    [tool.ruff]
+    line-length = 120
+    target-version = "py310"
+
+    [tool.ruff.lint]
+    select = ["E", "F", "I", "W"]
+
+    [tool.pytest.ini_options]
+    asyncio_mode = "auto"
+    testpaths = ["tests"]
+
+  src/example_app/__init__.py: |
+    """Document Editor Tools."""
+
+    __version__ = "0.1.0"
+
+  src/example_app/tools/__init__.py: |
+    """Document editing tools."""
+
+    from example_app.tools.documents import document_tool
+
+    __all__ = ["document_tool"]
+
+  src/example_app/tools/documents.py: |
+    """Tools for interacting with documents."""
+
+    import json
+    from dataclasses import dataclass
+    from functools import partial
+    from typing import Annotated, Any, Literal
+    from urllib.parse import parse_qs, urlparse
+
+    from pydantic import Field
+
+    RESPONSE_CHAR_LIMIT = 100000
+
+    class ToolError(Exception):
+        """Error raised by tools."""
+        pass
+
+    class HTTPException(Exception):
+        """HTTP exception for API errors."""
+        def __init__(self, status_code: int, detail: str):
+            self.status_code = status_code
+            self.detail = detail
+            super().__init__(detail)
+
+
+    def tool_decorator(func):
+        """Decorator to mark a function as a tool."""
+        return func
+
+
+    def validate_response(func):
+        """Decorator to validate response size."""
+        return func
+
+
+    DOCUMENT_OPERATIONS = Literal[
+        "get_document",
+        "insert_text",
+        "append_text",
+        "replace_text",
+        "delete_content",
+        "insert_table",
+        "update_table_cell",
+        "insert_table_row",
+        "insert_table_column",
+        "delete_table_row",
+        "delete_table_column",
+        "insert_media",
+        "format_existing_text",
+    ]
+
+
+    @dataclass
+    class FormatTextParams:
+        """Parameters for format_existing_text operation."""
+
+        search_text: str
+        foreground_color: str | None = None
+        background_color: str | None = None
+        bold: bool | None = None
+        italic: bool | None = None
+        underline: bool | None = None
+        strikethrough: bool | None = None
+        font_size: int | None = None
+        font_family: str | None = None
+        heading_level: int | None = None
+        link_url: str | None = None
+        list_type: str | None = None
+
+
+    @dataclass
+    class TableParams:
+        """Parameters for table operations.
+
+        Used by operations: insert_table, update_table_cell, insert_table_row,
+        insert_table_column, delete_table_row, delete_table_column.
+        
+        Attributes:
+            rows: Number of rows for insert_table operation
+            columns: Number of columns for insert_table operation
+            row_index: Row index (0-based) for update_table_cell, insert_table_row, and delete_table_row operations
+            column_index: Column index (0-based) for update_table_cell, insert_table_column, and delete_table_column operations
+            insert_below: For insert_table_row: True to insert below the specified row, False to insert above
+            insert_right: For insert_table_column: True to insert to the right of the specified column, False to insert to the left
+        """
+
+        rows: int | None = None
+        columns: int | None = None
+        row_index: int | None = None
+        column_index: int | None = None
+        insert_below: bool = False
+        insert_right: bool = False
+
+
+    @dataclass
+    class MediaParams:
+        """Parameters for media insertion.
+        
+        Attributes:
+            media_url: URL of the media to insert (must be publicly accessible)
+            width: Width of the media in points (PT)
+            height: Height of the media in points (PT)
+        """
+
+        media_url: str
+        width: int | None = None
+        height: int | None = None
+
+
+    def get_section_id_from_url(id_or_url: str) -> str | None:
+        """Get the section ID from a document URL."""
+        if not id_or_url.startswith("http"):
+            return None
+
+        parsed_url = urlparse(id_or_url)
+        query_params = parse_qs(parsed_url.query)
+
+        if section_values := query_params.get("section", []):
+            return section_values[0]
+
+        return None
+
+
+    def get_document_id(id_or_url: str) -> str:
+        """Extract document ID from URL or return as-is if already an ID."""
+        if id_or_url.startswith("http"):
+            # Simple extraction - in real code this would be more sophisticated
+            parts = id_or_url.split("/d/")
+            if len(parts) > 1:
+                return parts[1].split("/")[0]
+        return id_or_url
+
+
+    def get_document_service():
+        """Get the document service client."""
+        return DocumentService()
+
+
+    class DocumentService:
+        """Document service client."""
+        
+        def documents(self):
+            return self
+        
+        def get(self, documentId: str, includeTabsContent: bool = False):
+            return DocumentRequest(documentId)
+
+
+    class DocumentRequest:
+        """Document request object."""
+        
+        def __init__(self, doc_id: str):
+            self.doc_id = doc_id
+
+
+    async def safe_execute(request, operation_name: str, doc_id: str = "", scope_required: str = "") -> dict:
+        """Safely execute a request."""
+        return {
+            "sections": [
+                {
+                    "sectionProperties": {"sectionId": "section1", "title": "Main"},
+                    "documentSection": {
+                        "body": {
+                            "content": [{"endIndex": 100}]
+                        }
+                    }
+                }
+            ],
+            "body": {"content": [{"endIndex": 100}]}
+        }
+
+
+    async def execute_document_request(service, document_id: str, request: dict, request_name: str = "", scope_required: str = "") -> dict:
+        """Execute a document modification request."""
+        return {"replies": [{"replaceAllText": {"occurrencesChanged": 1}}]}
+
+
+    async def execute_document_requests(service, document_id: str, requests: list, request_name: str = "", scope_required: str = "") -> dict:
+        """Execute multiple document modification requests."""
+        return {}
+
+
+    @tool_decorator
+    @validate_response
+    async def document_tool(
+        document_id_or_url: str,
+        operation: DOCUMENT_OPERATIONS = "get_document",
+        text: Annotated[
+            str,
+            Field(
+                description=(
+                    "Text content to insert, append, or match for replacement. "
+                    "For `insert_text` and `append_text`, Markdown formatting and emojis are supported. "
+                    "For `replace_text`, this should be unformatted plain text to find and replace."
+                )
+            ),
+        ] = "",
+        replace_text: Annotated[
+            str,
+            Field(
+                description=(
+                    "New plain text that will replace all occurrences of the original unformatted `text`. "
+                    "Only used for the `replace_text` operation. "
+                    "WARNING: Markdown formatting is NOT supported - text will be inserted literally as-is."
+                )
+            ),
+        ] = "",
+        start_position: Annotated[
+            int | None,
+            Field(
+                description="Document index (1-based) to insert or delete text at, required for insert_text and "
+                "delete_content. Also used to target specific tables in multi-table documents: when provided, "
+                "table operations (update_table_cell, insert/delete row/column) will target the table containing "
+                "this position. Use the position returned from insert_table to reference that table later.",
+                ge=1,
+            ),
+        ] = None,
+        end_position: Annotated[
+            int | None,
+            Field(
+                description="Document index (1-based, exclusive) to delete content, required for delete_content",
+                ge=1,
+            ),
+        ] = None,
+        section_id: Annotated[
+            str,
+            Field(
+                description="Section ID to edit. Usually obtained from the response of a get_document operation "
+                "from this tool. Defaults to first section if not provided."
+            ),
+        ] = "",
+        section_title: Annotated[
+            str,
+            Field(description="Optional specific section title to filter for get_document."),
+        ] = "",
+        read_all_sections: Annotated[
+            bool,
+            Field(
+                description="For get_document. Default is False and must remain False "
+                "unless the user explicitly requests reading all sections. "
+                "If True, reads content from all sections. Ignored if `section_id` or "
+                "`section_title` is provided."
+            ),
+        ] = False,
+        table_params: Annotated[
+            TableParams | None,
+            Field(
+                None,
+                description=(
+                    "Parameters for table operations: insert_table, update_table_cell, "
+                    "insert_table_row, insert_table_column, delete_table_row, delete_table_column"
+                ),
+            ),
+        ] = None,
+        media_params: MediaParams | None = None,
+        format_params: FormatTextParams | None = None,
+    ) -> str:
+        """Use the `document_tool` to perform operations on an existing document.
+
+        IMPORTANT: Use the `upsert` tool to create a new document
+        (empty or with markdown content), or to completely replace
+        the content of an existing document.
+
+        Markdown formatting and emojis are supported ONLY for `insert_text` and `append_text`.
+        The `replace_text` operation does NOT support markdown - text is inserted literally.
+
+        Response formats:
+        - get_document: Returns JSON with sections array containing section_id, title, and content
+        - Other operations: Returns JSON with result details
+
+        Supported operations:
+            - get_document: Returns document content as an array of sections (ID, title, content)
+            - insert_text: Inserts markdown text at a specific position.
+            - append_text: Appends markdown text at the end of the document
+            - replace_text: Replaces all instances of unformatted `text` with unformatted `replace_text`.
+            - delete_content: Deletes content between two positions.
+            - insert_table: Creates a table with specified rows and columns at a position.
+            - update_table_cell: Updates content in a specific table cell.
+            - insert_table_row: Inserts a row above or below the specified row.
+            - insert_table_column: Inserts a column left or right of the specified column.
+            - delete_table_row: Deletes the specified row from a table.
+            - delete_table_column: Deletes the specified column from a table.
+            - insert_media: Inserts media from a URL at the specified position.
+            - format_existing_text: Finds and applies formatting to all occurrences of text. Supports character
+              formatting (bold, italic, colors, etc.), heading styles (H1-H6), links, and lists (bullet/numbered).
+              Note: heading and list formatting affects the entire paragraph containing the matched text.
+
+        Notes:
+            - Provide either document_id or document_url.
+            - There is no way for this tool to create, delete, or rename sections, even though it can edit their content.
+            Those tasks must be done through the Document UI.
+            - `text` and `replace_text` for `replace_text` **must** be plain text,
+              single words or short phrases (no formatting).
+            - For multi-table documents: insert_table returns a start_position you can use in subsequent
+              table operations to target that specific table. Without start_position, table operations default to
+              the first table found.
+        """
+        document_id = get_document_id(document_id_or_url)
+        service = get_document_service()
+
+        if not text and operation in ["insert_text", "append_text", "replace_text"]:
+            raise HTTPException(status_code=400, detail=f"text is required for {operation} operation")
+
+        table_operations = [
+            "insert_table",
+            "update_table_cell",
+            "insert_table_row",
+            "insert_table_column",
+            "delete_table_row",
+            "delete_table_column",
+        ]
+        if operation in table_operations and not table_params:
+            raise HTTPException(status_code=400, detail=f"table_params is required for {operation} operation")
+
+        if operation == "insert_media" and not media_params:
+            raise HTTPException(status_code=400, detail="media_params is required for insert_media operation")
+
+        if operation == "format_existing_text" and not format_params:
+            raise HTTPException(status_code=400, detail="format_params is required for format_existing_text operation")
+
+        operation_handlers = {
+            "get_document": partial(read_document, service, document_id_or_url, section_id, section_title, read_all_sections),
+            "insert_text": partial(insert_text, service, document_id, text, start_position, section_id),
+            "append_text": partial(append_text, service, document_id, text, section_id),
+            "replace_text": partial(replace_all_text, service, document_id, text, replace_text, section_id),
+            "delete_content": partial(
+                delete_content,
+                service,
+                document_id,
+                start_position,
+                end_position,
+                section_id,
+            ),
+            "insert_table": partial(
+                insert_table,
+                service,
+                document_id,
+                table_params.rows if table_params else None,
+                table_params.columns if table_params else None,
+                start_position,
+                section_id,
+            ),
+            "update_table_cell": partial(
+                update_table_cell,
+                service,
+                document_id,
+                table_params.row_index if table_params else None,
+                table_params.column_index if table_params else None,
+                text,
+                section_id,
+                start_position,
+            ),
+            "insert_table_row": partial(
+                modify_table_structure,
+                service,
+                document_id,
+                "insert_row",
+                table_params.row_index if table_params else None,
+                None,
+                table_params.insert_below if table_params else False,
+                False,
+                section_id,
+                start_position,
+            ),
+            "insert_table_column": partial(
+                modify_table_structure,
+                service,
+                document_id,
+                "insert_column",
+                None,
+                table_params.column_index if table_params else None,
+                False,
+                table_params.insert_right if table_params else False,
+                section_id,
+                start_position,
+            ),
+            "delete_table_row": partial(
+                modify_table_structure,
+                service,
+                document_id,
+                "delete_row",
+                table_params.row_index if table_params else None,
+                None,
+                False,
+                False,
+                section_id,
+                start_position,
+            ),
+            "delete_table_column": partial(
+                modify_table_structure,
+                service,
+                document_id,
+                "delete_column",
+                None,
+                table_params.column_index if table_params else None,
+                False,
+                False,
+                section_id,
+                start_position,
+            ),
+            "insert_media": partial(
+                insert_media,
+                service,
+                document_id,
+                media_params.media_url if media_params else None,
+                start_position,
+                media_params.width if media_params else None,
+                media_params.height if media_params else None,
+                section_id,
+            ),
+            "format_existing_text": partial(
+                format_existing_text,
+                service,
+                document_id,
+                format_params.search_text if format_params else None,
+                format_params.foreground_color if format_params else None,
+                format_params.background_color if format_params else None,
+                format_params.font_size if format_params else None,
+                format_params.font_family if format_params else None,
+                format_params.bold if format_params else None,
+                format_params.italic if format_params else None,
+                format_params.underline if format_params else None,
+                format_params.strikethrough if format_params else None,
+                format_params.heading_level if format_params else None,
+                format_params.link_url if format_params else None,
+                format_params.list_type if format_params else None,
+                section_id,
+            ),
+        }
+
+        if operation not in operation_handlers:
+            raise HTTPException(status_code=400, detail=f"Invalid operation: {operation}")
+
+        response = await operation_handlers[operation]()
+        return json.dumps(response, indent=2)
+
+
+    def _flatten_all_sections(section, section_list):
+        """Recursively flatten all sections including nested ones."""
+        section_list.append(section)
+        for nested_section in section.get("childSections", []):
+            _flatten_all_sections(nested_section, section_list)
+
+
+    def _get_all_sections_content(document) -> list[dict[str, Any]]:
+        """Return a list of dictionaries containing text and metadata for each section."""
+        flat_sections = []
+        for section in document.get("sections", []):
+            _flatten_all_sections(section, flat_sections)
+        section_data = []
+        for section in flat_sections:
+            section_content = section.get("documentSection", {}).get("body", {}).get("content", [])
+            section_text: str = "".join(_text_from_element(e) for e in section_content)
+
+            section_properties = section.get("sectionProperties", {})
+            section_id: str | None = section_properties.get("sectionId")
+            section_title: str = section_properties.get("title", "Untitled")
+
+            section_data.append({"content": section_text, "section_id": section_id, "title": section_title})
+
+        return section_data
+
+
+    def verify_response_size(id_or_url: str, response: dict[str, Any], all_section_titles_str: str) -> dict:
+        """Verify that the response size is less than the max size."""
+        if len(json.dumps(response)) <= RESPONSE_CHAR_LIMIT:
+            return response
+        if len(response["sections"]) > 1:
+            raise ToolError(
+                f"The document {id_or_url} is too large to read all sections at once. "
+                f"Select a specific section by providing its exact title from the following list: {all_section_titles_str}"
+            )
+        else:
+            section_title = response["sections"][0].get("title", "Untitled")
+            section_id = response["sections"][0].get("section_id", "Unknown")
+            raise ToolError(
+                f"The content from Section {section_title} (ID {section_id}) in document {id_or_url} is too large to process."
+            )
+
+
+    async def read_document(
+        service,
+        document_id_or_url: str,
+        section_id: str = "",
+        section_title: str = "",
+        read_all_sections: bool = False,
+    ) -> dict[str, list[dict[str, Any]]]:
+        """Returns a JSON response with sections array containing section_id, title, and content."""
+        document_id = get_document_id(document_id_or_url)
+        is_inferred_section = False
+        if not section_id and not section_title and not read_all_sections:
+            section_id = get_section_id_from_url(document_id_or_url)
+            if section_id:
+                is_inferred_section = True
+
+        document = await safe_execute(
+            service.documents().get(documentId=document_id, includeTabsContent=True),
+            "read document",
+            document_id_or_url,
+            scope_required="read document files",
+        )
+        section_data = _get_all_sections_content(document)
+        all_section_titles = [section["title"] for section in section_data]
+        all_section_titles_str = ", ".join(all_section_titles)
+
+        if section_id or section_title:
+            section_data = [s for s in section_data if s["section_id"] == section_id or s["title"].lower() == section_title.lower()]
+            if not section_data:
+                error = ""
+                if section_id:
+                    error = f"Section with ID '{section_id}'"
+                if section_title:
+                    error = f"Section with title '{section_title}'"
+                raise ValueError(
+                    f"{error} not found. Provide a valid section title from the following available sections: {all_section_titles_str}"
+                )
+
+        result = {
+            "sections": section_data,
+        }
+        if is_inferred_section and len(all_section_titles) > 1:
+            section_title = section_data[0].get("title", "Untitled")
+            result["warning"] = (
+                f"Only content from Section {section_title} (ID {section_id}) is shown. "
+                "The Section ID was inferred from the URL. Use `read_all_sections=True` "
+                "to show content from all sections."
+            )
+
+        return verify_response_size(document_id_or_url, result, all_section_titles_str)
+
+
+    def _text_from_text_run(text_run) -> str:
+        content = text_run["content"]
+        if url := text_run.get("textStyle", {}).get("link", {}).get("url", None):
+            return f"[{content}]({url})"
+        return content
+
+
+    def _text_from_person(person) -> str:
+        properties = person.get("personProperties", {})
+        name = properties.get("name")
+        email = properties.get("email")
+        result = ""
+        if name:
+            result += " " + name
+        if email:
+            result += f"({email})"
+        return result
+
+
+    def _text_from_rich_link(rich_link) -> str:
+        properties = rich_link.get("richLinkProperties", {})
+        title = properties.get("title")
+        uri = properties.get("uri")
+        result = ""
+        if title:
+            result += f" [{title}]"
+        if uri:
+            result += f"({uri})"
+        return result
+
+
+    def _text_from_element(element) -> str:
+        """Recursively pull text from Paragraphs, Tables, etc."""
+        text_parts = ""
+        match element:
+            case {"paragraph": {"elements": paragraph_elements}}:
+                for el in paragraph_elements:
+                    if "textRun" in el:
+                        text_parts += _text_from_text_run(el["textRun"])
+                    if "person" in el and (person_text := _text_from_person(el["person"])):
+                        text_parts += person_text
+                    if "richLink" in el and (rich_link_text := _text_from_rich_link(el["richLink"])):
+                        text_parts += rich_link_text
+            case {"table": {"tableRows": table_rows}}:
+                for row in table_rows:
+                    for cell in row["tableCells"]:
+                        for cell_content in cell["content"]:
+                            text_parts += _text_from_element(cell_content)
+                text_parts += "\n"
+            case {"tableOfContents": {"content": table_of_contents_content}}:
+                for el in table_of_contents_content:
+                    text_parts += _text_from_element(el)
+        return text_parts
+
+
+    async def insert_text(
+        service, document_id: str, text: str, start_position: int | None, section_id: str | None = None
+    ) -> dict[str, Any]:
+        """Insert text at a specific index in the given section in a document."""
+        if start_position is None:
+            raise HTTPException(status_code=400, detail="start_position is required for insert_text operation")
+        
+        response = {
+            "message": f"Inserted text at position {start_position}" + (f" in section {section_id}" if section_id else ""),
+            "text": text,
+            "start_position": start_position,
+            "section_id": section_id,
+        }
+        
+        location = {"index": start_position}
+        if section_id:
+            location["sectionId"] = section_id
+        request = {"insertText": {"location": location, "text": text}}
+        await execute_document_request(
+            service, document_id, request, request_name="insert text", scope_required="edit document files"
+        )
+        
+        inserted_length = len(text)
+        response["end_position"] = start_position + inserted_length
+        return response
+
+
+    async def append_text(service, document_id: str, text: str, section_id: str | None = None) -> dict[str, Any]:
+        """Append text to the end of the given section in a document."""
+        end_index = await get_document_last_index(service, document_id, section_id)
+        if text[0] != "\n":
+            text = "\n" + text
+        response = await insert_text(service, document_id, text, end_index - 1, section_id)
+        response["message"] = "Appended text to the end of the " + (f"section {section_id}" if section_id else "document")
+        return response
+
+
+    async def replace_all_text(service, document_id: str, text: str, replace_text: str, section_id: str) -> dict[str, str]:
+        """Replace all instances of a string in the given section in a document."""
+        if not replace_text:
+            raise HTTPException(status_code=400, detail="`replace_text` parameter is required for `replace_text` operation")
+
+        replace_request = {"containsText": {"text": text, "matchCase": True}, "replaceText": replace_text}
+        if section_id:
+            replace_request["sectionsCriteria"] = {"sectionIds": [section_id]}
+
+        request = {"replaceAllText": replace_request}
+
+        response = await execute_document_request(
+            service, document_id, request, request_name="replace text", scope_required="edit document files"
+        )
+        response = response.get("replies", [])
+        if not response:
+            raise ValueError("replace_text operation failed")
+        response = response[0].get("replaceAllText", {})
+        occurrences = response.get("occurrencesChanged", 0)
+        if occurrences == 0:
+            return {
+                "message": f"No occurrences of text '{text}' found in the document. "
+                "Nothing was replaced. Text should be a single word or short phrase without markdown.",
+                "text": text,
+                "replace_text": replace_text,
+                "section_id": section_id,
+            }
+
+        return {
+            "message": f"Replaced {occurrences} occurrences of '{text}' with '{replace_text}'"
+            + (f" in section {section_id}" if section_id else ""),
+            "text": text,
+            "replace_text": replace_text,
+            "section_id": section_id,
+        }
+
+
+    async def delete_content(
+        service, document_id: str, start_index: int | None, end_index: int | None, section_id: str | None = None
+    ) -> dict[str, Any]:
+        """Delete content between two positions in a specific section."""
+        if start_index is None or end_index is None:
+            raise HTTPException(status_code=400, detail="Both start_index and end_index are required for delete_content")
+
+        range_obj: dict[str, Any] = {"startIndex": start_index, "endIndex": end_index}
+        if section_id:
+            range_obj["sectionId"] = section_id
+
+        request = {"deleteContentRange": {"range": range_obj}}
+        await execute_document_request(
+            service, document_id, request, request_name="delete content", scope_required="edit document files"
+        )
+        return {
+            "message": f"Deleted content between index {start_index} and {end_index}"
+            + (f" in section {section_id}" if section_id else ""),
+            "start_index": start_index,
+            "end_index": end_index,
+            "section_id": section_id,
+        }
+
+
+    async def get_document_last_index(service, document_id: str, section_id: str | None = None) -> int:
+        """Get the last index of the document given a specific section."""
+        document = await safe_execute(
+            service.documents().get(documentId=document_id, includeTabsContent=True),
+            "read document",
+            scope_required="read document files",
+        )
+        
+        if section_id:
+            flat_sections = []
+            for section in document.get("sections", []):
+                _flatten_all_sections(section, flat_sections)
+
+            for section in flat_sections:
+                section_properties = section.get("sectionProperties", {})
+                if section_properties.get("sectionId") == section_id:
+                    section_content = section.get("documentSection", {}).get("body", {}).get("content", [])
+                    if section_content:
+                        return section_content[-1].get("endIndex", 1)
+                    else:
+                        return 1
+
+            raise HTTPException(status_code=400, detail=f"Section with ID '{section_id}' not found in document")
+        else:
+            return document.get("body", {}).get("content", [])[-1].get("endIndex", 1)
+
+
+    async def insert_table(
+        service, document_id: str, rows: int | None, columns: int | None, start_position: int | None, section_id: str | None
+    ) -> str:
+        """Insert a table at a specific position."""
+        if not rows or not columns:
+            raise HTTPException(status_code=400, detail="rows and columns are required for insert_table operation")
+        if start_position is None:
+            raise HTTPException(status_code=400, detail="start_position is required for insert_table operation")
+
+        location = {"index": start_position}
+        if section_id:
+            location["sectionId"] = section_id
+
+        request = {"insertTable": {"rows": rows, "columns": columns, "location": location}}
+
+        await execute_document_request(
+            service, document_id, request, request_name="insert table", scope_required="edit document files"
+        )
+
+        message = f"Inserted {rows}x{columns} table at position {start_position}"
+        if section_id:
+            message += f" in section {section_id}"
+        return message
+
+
+    async def update_table_cell(
+        service,
+        document_id: str,
+        row_index: int | None,
+        column_index: int | None,
+        text: str,
+        section_id: str | None,
+        start_position: int | None = None,
+    ) -> str:
+        """Update content in a specific table cell."""
+        if row_index is None or column_index is None:
+            raise HTTPException(status_code=400, detail="row_index and column_index are required for update_table_cell")
+
+        document = await safe_execute(
+            service.documents().get(documentId=document_id, includeTabsContent=True),
+            "read document",
+            scope_required="read document files",
+        )
+
+        cell_range = _find_table_cell_range(document, row_index, column_index, section_id, start_position)
+        if not cell_range:
+            raise HTTPException(status_code=404, detail=f"Table cell at row {row_index}, col {column_index} not found")
+
+        cell_start, cell_end = cell_range
+
+        requests = []
+        if cell_end > cell_start + 1:
+            delete_range = {"startIndex": cell_start, "endIndex": cell_end - 1}
+            if section_id:
+                delete_range["sectionId"] = section_id
+            requests.append({"deleteContentRange": {"range": delete_range}})
+
+        if requests:
+            await execute_document_requests(
+                service, document_id, requests, request_name="clear cell content", scope_required="edit document files"
+            )
+
+        location = {"index": cell_start}
+        if section_id:
+            location["sectionId"] = section_id
+        insert_request = {"insertText": {"location": location, "text": text}}
+        await execute_document_request(
+            service, document_id, insert_request, request_name="insert cell text", scope_required="edit document files"
+        )
+
+        message = f"Updated cell at row {row_index}, column {column_index}"
+        if section_id:
+            message += f" in section {section_id}"
+        return message
+
+
+    def _table_matches_position(element: dict, start_position: int | None) -> bool:
+        """Check if a table element contains the specified position."""
+        if start_position is None:
+            return True
+        table_start = element.get("startIndex")
+        table_end = element.get("endIndex")
+        return table_start <= start_position < table_end
+
+
+    def _find_table_cell_range(
+        document: dict, row_index: int, column_index: int, section_id: str | None, start_position: int | None = None
+    ) -> tuple[int, int] | None:
+        """Find the content range within a table cell (start and end indices)."""
+        sections = document.get("sections", [])
+        target_sections = []
+
+        if section_id:
+            for section in sections:
+                if section.get("sectionProperties", {}).get("sectionId") == section_id:
+                    target_sections = [section]
+                    break
+        else:
+            target_sections = sections[:1] if sections else []
+
+        for section in target_sections:
+            content = section.get("documentSection", {}).get("body", {}).get("content", [])
+            for element in content:
+                if "table" in element:
+                    if not _table_matches_position(element, start_position):
+                        continue
+                    table = element["table"]
+                    if row_index < len(table.get("tableRows", [])):
+                        row = table["tableRows"][row_index]
+                        if column_index < len(row.get("tableCells", [])):
+                            cell = row["tableCells"][column_index]
+                            cell_content = cell.get("content", [])
+                            for cell_element in cell_content:
+                                if "paragraph" in cell_element:
+                                    para_start = cell_element.get("startIndex")
+                                    para_end = cell_element.get("endIndex")
+                                    return (para_start, para_end)
+                            cell_start = cell.get("startIndex")
+                            cell_end = cell.get("endIndex")
+                            if cell_start is not None and cell_end is not None:
+                                return (cell_start + 1, cell_end - 1)
+
+        return None
+
+
+    def _find_table_start_index(
+        document: dict, row_index: int, column_index: int, section_id: str | None, start_position: int | None = None
+    ) -> int | None:
+        """Find the start index of a table element."""
+        sections = document.get("sections", [])
+        target_sections = []
+
+        if section_id:
+            for section in sections:
+                if section.get("sectionProperties", {}).get("sectionId") == section_id:
+                    target_sections = [section]
+                    break
+        else:
+            target_sections = sections[:1] if sections else []
+
+        for section in target_sections:
+            content = section.get("documentSection", {}).get("body", {}).get("content", [])
+            for element in content:
+                if "table" in element:
+                    if not _table_matches_position(element, start_position):
+                        continue
+                    table = element["table"]
+                    if row_index < len(table.get("tableRows", [])):
+                        row = table["tableRows"][row_index]
+                        if column_index < len(row.get("tableCells", [])):
+                            return element.get("startIndex")
+
+        return None
+
+
+    async def modify_table_structure(
+        service,
+        document_id: str,
+        operation: Literal["insert_row", "insert_column", "delete_row", "delete_column"],
+        row_index: int | None = None,
+        column_index: int | None = None,
+        insert_below: bool = False,
+        insert_right: bool = False,
+        section_id: str | None = None,
+        start_position: int | None = None,
+    ) -> str:
+        """Modify table structure by inserting or deleting rows/columns."""
+        if operation in ["insert_row", "delete_row"] and row_index is None:
+            raise HTTPException(status_code=400, detail=f"row_index is required for {operation} operation")
+        if operation in ["insert_column", "delete_column"] and column_index is None:
+            raise HTTPException(status_code=400, detail=f"column_index is required for {operation} operation")
+
+        document = await safe_execute(
+            service.documents().get(documentId=document_id, includeTabsContent=True),
+            "read document",
+            scope_required="read document files",
+        )
+
+        if operation in ["insert_row", "delete_row"]:
+            table_start = _find_table_start_index(document, row_index, 0, section_id, start_position)
+            if not table_start:
+                raise HTTPException(status_code=404, detail=f"Table row {row_index} not found")
+            table_cell_location = {
+                "tableCellLocation": {"tableStartLocation": {"index": table_start}, "rowIndex": row_index}
+            }
+        else:
+            table_start = _find_table_start_index(document, 0, column_index, section_id, start_position)
+            if not table_start:
+                raise HTTPException(status_code=404, detail=f"Table column {column_index} not found")
+            table_cell_location = {
+                "tableCellLocation": {"tableStartLocation": {"index": table_start}, "columnIndex": column_index}
+            }
+
+        if section_id:
+            table_cell_location["tableCellLocation"]["tableStartLocation"]["sectionId"] = section_id
+
+        operation_map = {
+            "insert_row": "insertTableRow",
+            "insert_column": "insertTableColumn",
+            "delete_row": "deleteTableRow",
+            "delete_column": "deleteTableColumn",
+        }
+        request_key = operation_map[operation]
+
+        if operation == "insert_row":
+            request = {request_key: {**table_cell_location, "insertBelow": insert_below}}
+            message = f"Inserted row {'below' if insert_below else 'above'} row {row_index}"
+        elif operation == "insert_column":
+            request = {request_key: {**table_cell_location, "insertRight": insert_right}}
+            message = f"Inserted column {'right of' if insert_right else 'left of'} column {column_index}"
+        elif operation == "delete_row":
+            request = {request_key: table_cell_location}
+            message = f"Deleted row {row_index}"
+        else:
+            request = {request_key: table_cell_location}
+            message = f"Deleted column {column_index}"
+
+        if section_id:
+            message += f" in section {section_id}"
+
+        request_name = operation.replace("_", " ")
+        await execute_document_request(
+            service, document_id, request, request_name=request_name, scope_required="edit document files"
+        )
+
+        return message
+
+
+    async def insert_media(
+        service,
+        document_id: str,
+        media_url: str | None,
+        start_position: int | None,
+        width: int | None,
+        height: int | None,
+        section_id: str | None,
+    ) -> str:
+        """Insert media from a URL at the specified position."""
+        if not media_url:
+            raise HTTPException(status_code=400, detail="media_url is required for insert_media operation")
+        if start_position is None:
+            raise HTTPException(status_code=400, detail="start_position is required for insert_media operation")
+
+        location = {"index": start_position}
+        if section_id:
+            location["sectionId"] = section_id
+
+        request = {"insertInlineMedia": {"uri": media_url, "location": location}}
+
+        if width or height:
+            object_size = {}
+            if width:
+                object_size["width"] = {"magnitude": width, "unit": "PT"}
+            if height:
+                object_size["height"] = {"magnitude": height, "unit": "PT"}
+            request["insertInlineMedia"]["objectSize"] = object_size
+
+        await execute_document_request(
+            service, document_id, request, request_name="insert media", scope_required="edit document files"
+        )
+
+        message = f"Inserted media from {media_url} at position {start_position}"
+        if section_id:
+            message += f" in section {section_id}"
+        return message
+
+
+    async def format_existing_text(
+        service,
+        document_id: str,
+        search_text: str | None,
+        foreground_color: str | None,
+        background_color: str | None,
+        font_size: int | None,
+        font_family: str | None,
+        bold: bool | None,
+        italic: bool | None,
+        underline: bool | None,
+        strikethrough: bool | None,
+        heading_level: int | None,
+        link_url: str | None,
+        list_type: str | None,
+        section_id: str | None,
+    ) -> str:
+        """Find and apply formatting to all occurrences of text."""
+        if not search_text:
+            raise HTTPException(status_code=400, detail="search_text is required for format_existing_text operation")
+
+        document = await safe_execute(
+            service.documents().get(documentId=document_id, includeTabsContent=True),
+            "read document",
+            scope_required="read document files",
+        )
+
+        positions = find_text_positions(document, search_text, section_id)
+
+        if not positions:
+            message = f"No occurrences of '{search_text}' found"
+            if section_id:
+                message += f" in section {section_id}"
+            return message
+
+        text_style, fields = build_text_style(
+            foreground_color=foreground_color,
+            background_color=background_color,
+            font_size=font_size,
+            font_family=font_family,
+            bold=bold,
+            italic=italic,
+            underline=underline,
+            strikethrough=strikethrough,
+            link_url=link_url,
+        )
+
+        if not fields and not heading_level and not list_type:
+            raise HTTPException(status_code=400, detail="At least one formatting option must be specified")
+
+        positions.sort(reverse=True)
+
+        requests = []
+        for start, end in positions:
+            range_dict = {"startIndex": start, "endIndex": end}
+            if section_id:
+                range_dict["sectionId"] = section_id
+
+            if fields:
+                requests.append({"updateTextStyle": {"range": range_dict, "textStyle": text_style, "fields": fields}})
+
+            if heading_level:
+                if not (1 <= heading_level <= 6):
+                    raise HTTPException(status_code=400, detail="heading_level must be between 1 and 6")
+                requests.append(
+                    {
+                        "updateParagraphStyle": {
+                            "range": range_dict,
+                            "paragraphStyle": {"namedStyleType": f"HEADING_{heading_level}"},
+                            "fields": "namedStyleType",
+                        }
+                    }
+                )
+
+            if list_type:
+                if list_type == "bullet":
+                    preset = "BULLET_DISC_CIRCLE_SQUARE"
+                elif list_type == "numbered":
+                    preset = "NUMBERED_DECIMAL_ALPHA_ROMAN"
+                else:
+                    raise HTTPException(status_code=400, detail="list_type must be 'bullet' or 'numbered'")
+                requests.append(
+                    {
+                        "createParagraphBullets": {
+                            "range": range_dict,
+                            "bulletPreset": preset,
+                        }
+                    }
+                )
+
+        if not requests:
+            raise HTTPException(
+                status_code=500,
+                detail=f"No formatting requests generated for '{search_text}'. Positions found: {len(positions)}. This is a bug.",
+            )
+
+        await execute_document_requests(
+            service, document_id, requests, request_name="format text", scope_required="edit document files"
+        )
+
+        message = f"Formatted {len(positions)} occurrences of '{search_text}'"
+        if section_id:
+            message += f" in section {section_id}"
+        return message
+
+
+    def find_text_positions(document: dict, search_text: str, section_id: str | None) -> list[tuple[int, int]]:
+        """Find all positions of search_text in the document."""
+        positions = []
+        sections = document.get("sections", [])
+        
+        target_sections = []
+        if section_id:
+            for section in sections:
+                if section.get("sectionProperties", {}).get("sectionId") == section_id:
+                    target_sections = [section]
+                    break
+        else:
+            target_sections = sections
+        
+        for section in target_sections:
+            content = section.get("documentSection", {}).get("body", {}).get("content", [])
+            full_text = "".join(_text_from_element(e) for e in content)
+            
+            start = 0
+            while True:
+                pos = full_text.find(search_text, start)
+                if pos == -1:
+                    break
+                positions.append((pos + 1, pos + 1 + len(search_text)))  # 1-based indexing
+                start = pos + 1
+        
+        return positions
+
+
+    def build_text_style(
+        foreground_color: str | None = None,
+        background_color: str | None = None,
+        font_size: int | None = None,
+        font_family: str | None = None,
+        bold: bool | None = None,
+        italic: bool | None = None,
+        underline: bool | None = None,
+        strikethrough: bool | None = None,
+        link_url: str | None = None,
+    ) -> tuple[dict, str]:
+        """Build a text style dictionary and fields string."""
+        text_style = {}
+        fields = []
+        
+        if foreground_color:
+            text_style["foregroundColor"] = {"color": {"rgbColor": parse_color(foreground_color)}}
+            fields.append("foregroundColor")
+        
+        if background_color:
+            text_style["backgroundColor"] = {"color": {"rgbColor": parse_color(background_color)}}
+            fields.append("backgroundColor")
+        
+        if font_size:
+            text_style["fontSize"] = {"magnitude": font_size, "unit": "PT"}
+            fields.append("fontSize")
+        
+        if font_family:
+            text_style["weightedFontFamily"] = {"fontFamily": font_family}
+            fields.append("weightedFontFamily")
+        
+        if bold is not None:
+            text_style["bold"] = bold
+            fields.append("bold")
+        
+        if italic is not None:
+            text_style["italic"] = italic
+            fields.append("italic")
+        
+        if underline is not None:
+            text_style["underline"] = underline
+            fields.append("underline")
+        
+        if strikethrough is not None:
+            text_style["strikethrough"] = strikethrough
+            fields.append("strikethrough")
+        
+        if link_url:
+            text_style["link"] = {"url": link_url}
+            fields.append("link")
+        
+        return text_style, ",".join(fields)
+
+
+    def parse_color(color_str: str) -> dict:
+        """Parse a color string (hex or name) to RGB dict."""
+        # Simple hex color parsing
+        if color_str.startswith("#"):
+            color_str = color_str[1:]
+        if len(color_str) == 6:
+            return {
+                "red": int(color_str[0:2], 16) / 255,
+                "green": int(color_str[2:4], 16) / 255,
+                "blue": int(color_str[4:6], 16) / 255,
+            }
+        return {"red": 0, "green": 0, "blue": 0}
+
+  tests/test_documents.py: |
+    """Tests for document tool."""
+
+    import pytest
+    from example_app.tools.documents import (
+        document_tool,
+        MediaParams,
+        TableParams,
+        FormatTextParams,
+        HTTPException,
+        get_document_id,
+        get_section_id_from_url,
+        insert_media,
+        format_existing_text,
+        modify_table_structure,
+    )
+
+
+    class TestGetDocumentId:
+        """Tests for get_document_id function."""
+
+        def test_returns_id_when_not_url(self):
+            assert get_document_id("abc123") == "abc123"
+
+        def test_extracts_id_from_url(self):
+            url = "https://docs.example.com/document/d/abc123xyz/edit"
+            assert get_document_id(url) == "abc123xyz"
+
+
+    class TestGetSectionIdFromUrl:
+        """Tests for get_section_id_from_url function."""
+
+        def test_returns_none_for_non_url(self):
+            assert get_section_id_from_url("abc123") is None
+
+        def test_returns_none_when_no_section_param(self):
+            url = "https://docs.example.com/document/d/abc123/edit"
+            assert get_section_id_from_url(url) is None
+
+        def test_extracts_section_id_from_url(self):
+            url = "https://docs.example.com/document/d/abc123/edit?section=section1"
+            assert get_section_id_from_url(url) == "section1"
+
+
+    class TestMediaParams:
+        """Tests for MediaParams dataclass."""
+
+        def test_media_params_with_all_fields(self):
+            params = MediaParams(
+                media_url="https://example.com/image.png",
+                width=100,
+                height=200
+            )
+            assert params.media_url == "https://example.com/image.png"
+            assert params.width == 100
+            assert params.height == 200
+
+        def test_media_params_with_optional_fields(self):
+            params = MediaParams(media_url="https://example.com/image.png")
+            assert params.media_url == "https://example.com/image.png"
+            assert params.width is None
+            assert params.height is None
+
+
+    class TestTableParams:
+        """Tests for TableParams dataclass."""
+
+        def test_table_params_for_insert(self):
+            params = TableParams(rows=3, columns=4)
+            assert params.rows == 3
+            assert params.columns == 4
+
+        def test_table_params_for_cell_update(self):
+            params = TableParams(row_index=1, column_index=2)
+            assert params.row_index == 1
+            assert params.column_index == 2
+
+        def test_table_params_insert_flags(self):
+            params = TableParams(row_index=0, insert_below=True)
+            assert params.insert_below is True
+            assert params.insert_right is False
+
+
+    class TestFormatTextParams:
+        """Tests for FormatTextParams dataclass."""
+
+        def test_format_params_basic(self):
+            params = FormatTextParams(search_text="hello")
+            assert params.search_text == "hello"
+            assert params.bold is None
+            assert params.italic is None
+
+        def test_format_params_with_styling(self):
+            params = FormatTextParams(
+                search_text="hello",
+                bold=True,
+                italic=True,
+                foreground_color="#FF0000",
+                font_size=14
+            )
+            assert params.bold is True
+            assert params.italic is True
+            assert params.foreground_color == "#FF0000"
+            assert params.font_size == 14
+
+
+    class TestDocumentToolValidation:
+        """Tests for document_tool parameter validation."""
+
+        @pytest.mark.asyncio
+        async def test_insert_text_requires_text(self):
+            with pytest.raises(HTTPException) as exc_info:
+                await document_tool(
+                    document_id_or_url="doc123",
+                    operation="insert_text",
+                    text="",
+                )
+            assert exc_info.value.status_code == 400
+            assert "text is required" in exc_info.value.detail
+
+        @pytest.mark.asyncio
+        async def test_table_operation_requires_table_params(self):
+            with pytest.raises(HTTPException) as exc_info:
+                await document_tool(
+                    document_id_or_url="doc123",
+                    operation="insert_table",
+                    table_params=None,
+                )
+            assert exc_info.value.status_code == 400
+            assert "table_params is required" in exc_info.value.detail
+
+        @pytest.mark.asyncio
+        async def test_insert_media_requires_media_params(self):
+            with pytest.raises(HTTPException) as exc_info:
+                await document_tool(
+                    document_id_or_url="doc123",
+                    operation="insert_media",
+                    media_params=None,
+                )
+            assert exc_info.value.status_code == 400
+            assert "media_params is required" in exc_info.value.detail
+
+        @pytest.mark.asyncio
+        async def test_format_text_requires_format_params(self):
+            with pytest.raises(HTTPException) as exc_info:
+                await document_tool(
+                    document_id_or_url="doc123",
+                    operation="format_existing_text",
+                    format_params=None,
+                )
+            assert exc_info.value.status_code == 400
+            assert "format_params is required" in exc_info.value.detail
+
+
+    class TestInsertMedia:
+        """Tests for insert_media function."""
+
+        @pytest.mark.asyncio
+        async def test_insert_media_requires_url(self):
+            from example_app.tools.documents import get_document_service
+            service = get_document_service()
+            
+            with pytest.raises(HTTPException) as exc_info:
+                await insert_media(
+                    service=service,
+                    document_id="doc123",
+                    media_url=None,
+                    start_position=1,
+                    width=None,
+                    height=None,
+                    section_id=None,
+                )
+            assert exc_info.value.status_code == 400
+            assert "media_url is required" in exc_info.value.detail
+
+        @pytest.mark.asyncio
+        async def test_insert_media_requires_position(self):
+            from example_app.tools.documents import get_document_service
+            service = get_document_service()
+            
+            with pytest.raises(HTTPException) as exc_info:
+                await insert_media(
+                    service=service,
+                    document_id="doc123",
+                    media_url="https://example.com/image.png",
+                    start_position=None,
+                    width=None,
+                    height=None,
+                    section_id=None,
+                )
+            assert exc_info.value.status_code == 400
+            assert "start_position is required" in exc_info.value.detail
+
+        @pytest.mark.asyncio
+        async def test_insert_media_success(self):
+            from example_app.tools.documents import get_document_service
+            service = get_document_service()
+            
+            result = await insert_media(
+                service=service,
+                document_id="doc123",
+                media_url="https://example.com/image.png",
+                start_position=1,
+                width=100,
+                height=200,
+                section_id=None,
+            )
+            assert "Inserted media" in result
+            assert "https://example.com/image.png" in result
+            assert "position 1" in result
+
+
+    class TestModifyTableStructure:
+        """Tests for modify_table_structure function."""
+
+        @pytest.mark.asyncio
+        async def test_insert_row_requires_row_index(self):
+            from example_app.tools.documents import get_document_service
+            service = get_document_service()
+            
+            with pytest.raises(HTTPException) as exc_info:
+                await modify_table_structure(
+                    service=service,
+                    document_id="doc123",
+                    operation="insert_row",
+                    row_index=None,
+                )
+            assert exc_info.value.status_code == 400
+            assert "row_index is required" in exc_info.value.detail
+
+        @pytest.mark.asyncio
+        async def test_insert_column_requires_column_index(self):
+            from example_app.tools.documents import get_document_service
+            service = get_document_service()
+            
+            with pytest.raises(HTTPException) as exc_info:
+                await modify_table_structure(
+                    service=service,
+                    document_id="doc123",
+                    operation="insert_column",
+                    column_index=None,
+                )
+            assert exc_info.value.status_code == 400
+            assert "column_index is required" in exc_info.value.detail
+
+validate:
+  # ── Core files still exist ──
+  - type: file_exists
+    path: src/example_app/tools/documents.py
+    name: documents.py exists
+
+  - type: file_exists
+    path: tests/test_documents.py
+    name: test file exists
+
+  - type: file_exists
+    path: src/example_app/tools/__init__.py
+    name: tools __init__.py exists
+
+  # ── insert_media removed from DOCUMENT_OPERATIONS ──
+  - type: file_not_matches
+    path: src/example_app/tools/documents.py
+    regex: '"insert_media"'
+    name: insert_media removed from DOCUMENT_OPERATIONS
+
+  # ── MediaParams class removed ──
+  - type: file_not_matches
+    path: src/example_app/tools/documents.py
+    regex: "class MediaParams"
+    name: MediaParams class removed
+
+  # ── insert_media function removed ──
+  - type: file_not_matches
+    path: src/example_app/tools/documents.py
+    regex: "async def insert_media"
+    name: insert_media function removed
+
+  # ── media_params parameter removed from document_tool ──
+  - type: file_not_matches
+    path: src/example_app/tools/documents.py
+    regex: "media_params"
+    name: media_params references removed
+
+  # ── Other operations preserved ──
+  - type: file_contains
+    path: src/example_app/tools/documents.py
+    pattern: '"get_document"'
+    name: get_document preserved
+
+  - type: file_contains
+    path: src/example_app/tools/documents.py
+    pattern: '"insert_text"'
+    name: insert_text preserved
+
+  - type: file_contains
+    path: src/example_app/tools/documents.py
+    pattern: '"replace_text"'
+    name: replace_text preserved
+
+  - type: file_contains
+    path: src/example_app/tools/documents.py
+    pattern: '"format_existing_text"'
+    name: format_existing_text preserved
+
+  - type: file_contains
+    path: src/example_app/tools/documents.py
+    pattern: '"insert_table"'
+    name: insert_table preserved
+
+  # ── Other classes preserved ──
+  - type: file_contains
+    path: src/example_app/tools/documents.py
+    pattern: "class FormatTextParams"
+    name: FormatTextParams preserved
+
+  - type: file_contains
+    path: src/example_app/tools/documents.py
+    pattern: "class TableParams"
+    name: TableParams preserved
+
+  # ── Tests updated: no MediaParams/insert_media references ──
+  - type: file_not_matches
+    path: tests/test_documents.py
+    regex: "MediaParams"
+    name: MediaParams removed from tests
+
+  - type: file_not_matches
+    path: tests/test_documents.py
+    regex: "insert_media"
+    name: insert_media removed from tests
+
+  # ── Remaining tests still pass ──
+  - type: command_succeeds
+    command: "uv sync && uv run pytest"
+    name: tests pass

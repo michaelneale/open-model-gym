@@ -353,7 +353,8 @@ async function runGooseAgent(
   prompt: string,
   workdir: string,
   sessionName?: string,  // If provided, use/continue this session
-  resume: boolean = false  // If true, resume existing session (for turn 2+)
+  resume: boolean = false,  // If true, resume existing session (for turn 2+)
+  timeout: number = 5 * 60 * 1000  // Timeout in ms
 ): Promise<string> {
   const promptFile = join(workdir, ".goose-prompt.txt");
   writeFileSync(promptFile, prompt);
@@ -385,7 +386,7 @@ async function runGooseAgent(
       GOOSE_PATH_ROOT: GOOSE_ROOT,
       MCP_HARNESS_LOG: join(workdir, "tool-calls.log"),
     },
-    timeout: 5 * 60 * 1000,
+    timeout,
     encoding: "utf-8",
   });
 
@@ -454,7 +455,8 @@ async function runOpenCodeAgent(
   runner: RunnerConfig,
   prompt: string,
   workdir: string,
-  resume: boolean = false
+  resume: boolean = false,
+  timeout: number = 5 * 60 * 1000  // Timeout in ms
 ): Promise<string> {
   // Write opencode.json config to workdir
   const openCodeConfig = generateOpenCodeConfig(model, runner, workdir);
@@ -479,7 +481,7 @@ async function runOpenCodeAgent(
       XDG_CONFIG_HOME: OPENCODE_ROOT,
       XDG_DATA_HOME: OPENCODE_ROOT,
     },
-    timeout: 5 * 60 * 1000,
+    timeout,
     encoding: "utf-8",
     shell: "/bin/bash",
   });
@@ -543,7 +545,8 @@ async function runPiAgent(
   prompt: string,
   workdir: string,
   sessionName?: string,  // If provided, use/continue this session (for multi-turn)
-  resume: boolean = false  // If true, continue existing session (for turn 2+)
+  resume: boolean = false,  // If true, continue existing session (for turn 2+)
+  timeout: number = 5 * 60 * 1000  // Timeout in ms
 ): Promise<string> {
   // Write prompt to file (use cat to avoid shell escaping issues)
   const promptFile = join(workdir, ".pi-prompt.txt");
@@ -644,7 +647,7 @@ async function runPiAgent(
       PI_CODING_AGENT_DIR: PI_CONFIG_DIR,  // Use isolated config dir
       MCP_HARNESS_LOG: join(workdir, "tool-calls.log"),
     },
-    timeout: 5 * 60 * 1000,
+    timeout,
     encoding: "utf-8",
     shell: "/bin/bash",
   });
@@ -667,17 +670,18 @@ async function runAgent(
   prompt: string,
   workdir: string,
   sessionId?: string,  // For multi-turn (goose, pi)
-  resume: boolean = false  // For multi-turn: true on turn 2+
+  resume: boolean = false,  // For multi-turn: true on turn 2+
+  timeout: number = 5 * 60 * 1000  // Timeout in ms (from scenario.timeout)
 ): Promise<AgentResult> {
   if (runner.type === "opencode") {
-    const output = await runOpenCodeAgent(model, runner, prompt, workdir, resume);
+    const output = await runOpenCodeAgent(model, runner, prompt, workdir, resume, timeout);
     return { output };
   }
   if (runner.type === "pi") {
-    const output = await runPiAgent(model, runner, prompt, workdir, sessionId, resume);
+    const output = await runPiAgent(model, runner, prompt, workdir, sessionId, resume, timeout);
     return { output, sessionId };
   }
-  const output = await runGooseAgent(model, runner, prompt, workdir, sessionId, resume);
+  const output = await runGooseAgent(model, runner, prompt, workdir, sessionId, resume, timeout);
   return { output, sessionId };
 }
 
@@ -894,7 +898,8 @@ async function runScenario(
 
       // Run the agent (with session for multi-turn)
       const resume = turnIndex > 0;  // Resume session on turn 2+
-      const result = await runAgent(model, runner, turn.prompt, workdir, sessionId, resume);
+      const timeout = scenario.timeout ?? 5 * 60 * 1000;  // Default 5 min
+      const result = await runAgent(model, runner, turn.prompt, workdir, sessionId, resume, timeout);
       
       // Capture session ID from first turn (for opencode)
       if (turnIndex === 0 && result.sessionId) {
